@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 
 import TextInput from "../components/TextInput";
 import PrimaryButton from "../components/PrimaryButton";
@@ -18,7 +18,6 @@ export default function Login() {
       const user = await signInWithGoogle();
       console.log("Logged in user:", user);
 
-      // ✅ professional flow: redirect after auth
       navigate("/dashboard");
     } catch (error) {
       console.error(error);
@@ -75,9 +74,12 @@ export default function Login() {
 
           <p className="text-[13px] text-muted mt-4">
             Don&apos;t have an account?{" "}
-            <a href="#" className="font-extrabold hover:underline">
+            <Link
+              to="/sign-up"
+              className="font-extrabold hover:underline"
+            >
               Sign up for free!
-            </a>
+            </Link>
           </p>
         </div>
       </section>

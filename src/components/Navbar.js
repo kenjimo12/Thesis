@@ -52,19 +52,39 @@ export default function Navbar() {
       {/* ACTION BUTTONS */}
       <div className="flex items-center gap-1.5">
         <NavLink
-          to="/"
-          className="h-[30px] px-[18px] rounded-full border border-greenBorder bg-gradient-to-b from-[#C9FF86] to-green text-[13px] font-extrabold shadow-greenSoft hover:-translate-y-[1px] hover:shadow-greenHover transition"
+          to="/login"
+          end
+          className={({ isActive }) =>
+            `
+            h-[30px] px-[18px] rounded-full border text-[13px] font-extrabold transition
+            ${
+              isActive
+                ? "border-greenBorder bg-gradient-to-b from-[#C9FF86] to-green shadow-greenSoft"
+                : "border-border bg-white hover:-translate-y-[1px]"
+            }
+            `
+          }
         >
           Login
         </NavLink>
 
         <NavLink
-          to="/signup"
-          className="h-[30px] px-[18px] rounded-full border border-border bg-white text-[13px] font-bold hover:-translate-y-[1px] transition"
+          to="/sign-up"
+          className={({ isActive }) =>
+            `
+            h-[30px] px-[18px] rounded-full border text-[13px] font-bold transition
+            ${
+              isActive
+                ? "border-greenBorder bg-gradient-to-b from-[#C9FF86] to-green shadow-greenSoft"
+                : "border-border bg-white hover:-translate-y-[1px]"
+            }
+            `
+          }
         >
           Sign-up
         </NavLink>
       </div>
+
     </header>
   );
 }

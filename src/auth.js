@@ -1,6 +1,5 @@
 // src/auth.js
 
-// Firebase core
 import { initializeApp } from "firebase/app";
 
 // Firebase Auth
@@ -10,9 +9,6 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-
-// ❗ Analytics is OPTIONAL (safe to remove if not needed)
-// import { getAnalytics } from "firebase/analytics";
 
 // Firebase configuration
 const firebaseConfig = {
