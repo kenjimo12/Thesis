@@ -5,7 +5,7 @@ import AuthLayout from "../layouts/AuthLayout";
 import LandingPage from "../pages/LandingPage";
 import Login from "../pages/Login";
 import Signup from "../pages/Signup";
-import ProtectedRoute from "./ProtectedRoute";
+
 
 export default function AppRoutes() {
   return (
@@ -17,11 +17,11 @@ export default function AppRoutes() {
       </Route>
 
       {/* PROTECTED PAGES */}
-      <Route element={<ProtectedRoute />}>
+     
         <Route element={<MainLayout />}>
           <Route path="/" element={<LandingPage />} />
         </Route>
-      </Route>
+   
     </Routes>
   );
 }
