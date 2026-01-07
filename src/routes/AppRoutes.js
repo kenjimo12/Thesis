@@ -11,7 +11,7 @@ export default function AppRoutes() {
   return (
     <Routes>
       {/* AUTH PAGES */}
-      <Route element={<AuthLayout />}>
+      <Route element={<MainLayout/>}>
         <Route path="/login" element={<Login />} />
         <Route path="/sign-up" element={<Signup />} />
       </Route>

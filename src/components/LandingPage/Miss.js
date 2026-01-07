@@ -5,7 +5,8 @@ import logoImg from "../../assets/logo.png";
 
 export default function Miss() {
   return (
-    <section className="relative w-screen left-1/2 -translate-x-1/2 bg-[#A7B59B] py-20 overflow-hidden">
+      <section className="relative w-full bg-[#A7B59B] py-20 overflow-hidden">
+
       {/* Zigzag borders */}
       <div className="pointer-events-none absolute top-0 left-0 w-full h-7 bg-[linear-gradient(135deg,#fff_25%,transparent_25%),linear-gradient(225deg,#fff_25%,transparent_25%)] bg-[length:26px_26px]" />
       <div className="pointer-events-none absolute bottom-0 left-0 w-full h-7 rotate-180 bg-[linear-gradient(135deg,#fff_25%,transparent_25%),linear-gradient(225deg,#fff_25%,transparent_25%)] bg-[length:26px_26px]" />
