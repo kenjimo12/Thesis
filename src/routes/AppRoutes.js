@@ -1,25 +1,27 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route } from "react-router-dom";
 import MainLayout from "../layouts/MainLayout";
 import AuthLayout from "../layouts/AuthLayout";
+
+import LandingPage from "../pages/LandingPage";
 import Login from "../pages/Login";
 import Signup from "../pages/Signup";
+import ProtectedRoute from "./ProtectedRoute";
 
 export default function AppRoutes() {
   return (
     <Routes>
+      {/* AUTH PAGES */}
       <Route element={<AuthLayout />}>
-        {/* If you want / to show Login too */}
-        
-
-        {/* This makes Login show on /login */}
         <Route path="/login" element={<Login />} />
         <Route path="/sign-up" element={<Signup />} />
       </Route>
 
-      <Route element={<MainLayout />}>
-        <Route path="/" element={<Navigate to="/login" replace />} />
+      {/* PROTECTED PAGES */}
+      <Route element={<ProtectedRoute />}>
+        <Route element={<MainLayout />}>
+          <Route path="/" element={<LandingPage />} />
+        </Route>
       </Route>
-      
     </Routes>
   );
 }
