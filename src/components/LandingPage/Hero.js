@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom"; // ✅ add
 import heroImg from "../../assets/Hero.png";
 import bottomParallaxImg from "../../assets/Parallax.png";
 
 export default function Hero() {
+  const navigate = useNavigate(); // ✅ add
+
   const [offset, setOffset] = useState(0);
   const [visible, setVisible] = useState(false);
 
@@ -72,7 +75,6 @@ export default function Hero() {
             `}
             style={{ transitionDelay: visible ? "60ms" : "0ms" }}
           >
-            {/* ✅ FIXED HEADLINE (no mobile spacing bug) */}
             <h1
               className="
                 font-lora text-[#141414] font-extrabold tracking-[-0.02em]
@@ -110,6 +112,7 @@ export default function Hero() {
 
             <div className="mt-10 flex justify-center lg:justify-start">
               <button
+               onClick={() => navigate("/services/assessment")}
                 className="
                   inline-flex items-center justify-center
                   rounded-xl

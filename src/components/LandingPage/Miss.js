@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import missionImg from "../../assets/Mission.png";
 import visionImg from "../../assets/Vision.png";
@@ -57,6 +58,8 @@ function FadeUp({
 }
 
 export default function Miss() {
+  const navigate = useNavigate();
+
   return (
     <section className="relative w-full bg-[#A7B59B] py-20 overflow-hidden">
       {/* Zigzag borders */}
@@ -64,7 +67,7 @@ export default function Miss() {
       <div className="pointer-events-none absolute bottom-0 left-0 w-full h-7 rotate-180 bg-[linear-gradient(135deg,#fff_25%,transparent_25%),linear-gradient(225deg,#fff_25%,transparent_25%)] bg-[length:26px_26px]" />
 
       <div className="mx-auto w-full max-w-[1280px] px-6">
-        {/* CheckIn Logo */}
+        {/* Logo */}
         <FadeUp delay={0} className="flex justify-center mb-16">
           <img
             src={logoImg}
@@ -77,8 +80,8 @@ export default function Miss() {
         {/* Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-10 lg:gap-12">
           {/* Mission */}
-          <FadeUp delay={120} className="w-full" y={22}>
-            <div className="bg-[#DCE7D2] rounded-[18px] border-2 border-black px-10 py-10 text-center">
+          <FadeUp delay={120} y={22}>
+            <div className="bg-[#DCE7D2] rounded-[18px] border-2 border-black px-10 py-10 text-center min-h-[520px] flex flex-col items-center">
               <h3
                 className="mb-5 text-[48px] md:text-[56px] leading-none"
                 style={{ fontFamily: "'Luckiest Guy', cursive" }}
@@ -94,15 +97,15 @@ export default function Miss() {
               <img
                 src={missionImg}
                 alt="Mission illustration"
-                className="mx-auto h-[220px] md:h-[240px] lg:h-[260px] w-auto object-contain"
+                className="mt-auto mx-auto h-[220px] md:h-[240px] lg:h-[260px] w-auto object-contain"
                 draggable={false}
               />
             </div>
           </FadeUp>
 
           {/* Vision */}
-          <FadeUp delay={240} className="w-full" y={22}>
-            <div className="bg-[#DCE7D2] rounded-[18px] border-2 border-black px-10 py-10 text-center">
+          <FadeUp delay={240} y={22}>
+            <div className="bg-[#DCE7D2] rounded-[18px] border-2 border-black px-10 py-10 text-center min-h-[520px] flex flex-col items-center">
               <h3
                 className="mb-5 text-[48px] md:text-[56px] leading-none"
                 style={{ fontFamily: "'Luckiest Guy', cursive" }}
@@ -118,7 +121,7 @@ export default function Miss() {
               <img
                 src={visionImg}
                 alt="Vision illustration"
-                className="mx-auto h-[220px] md:h-[240px] lg:h-[260px] w-auto object-contain"
+                className="mt-auto mx-auto h-[220px] md:h-[240px] lg:h-[260px] w-auto object-contain"
                 draggable={false}
               />
             </div>
@@ -126,8 +129,11 @@ export default function Miss() {
         </div>
 
         {/* Learn more */}
-        <FadeUp delay={380} className="flex justify-center mt-12" y={16}>
-          <button className="flex items-center gap-2 text-[13px] font-semibold hover:opacity-80 transition">
+        <FadeUp delay={380} y={16} className="flex justify-center mt-12">
+          <button
+            onClick={() => navigate("/about-us")}
+            className="flex items-center gap-2 text-[13px] font-semibold hover:opacity-80 transition"
+          >
             <span>Learn More</span>
             <img src={arrowIcon} alt="arrow" className="w-6 h-6" />
           </button>
