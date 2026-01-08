@@ -261,17 +261,7 @@ export default function Emergency() {
             cta: "Update with your campus contact",
             desc: "If you're feeling overwhelmed, anxious, or unsafe, reach out to your guidance office for support and referral.",
             icon: <SchoolIcon className="w-6 h-6" />,
-          },
-          {
-            tag: "Trusted adult",
-            title: "Teacher / Adviser",
-            number: "Message your adviser",
-            href: "#",
-            mode: "link",
-            cta: "Ask for help today",
-            desc: "If you don’t know where to start, message a trusted teacher/adviser and tell them you need support.",
-            icon: <DoodleHeart className="w-6 h-6" />,
-          },
+          }
         ],
       },
       {
