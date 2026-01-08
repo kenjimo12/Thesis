@@ -101,7 +101,7 @@ export default function Navbar() {
     { to: "/", label: "Home", end: true },
     { to: "/about-us", label: "About us" },
     { to: "/privacy-policy", label: "Privacy Policy" },
-    { to: "/faqs", label: "FAQS" },
+   
   ];
 
   const isServicesActive = pathname.startsWith("/services");
