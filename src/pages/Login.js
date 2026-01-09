@@ -7,6 +7,8 @@ import GoogleButton from "../components/GoogleButton";
 import heroImg from "../assets/mental-health.png";
 import { signInWithGoogle } from "../auth";
 
+import { setAuth, clearAuth, getUser, getToken } from "../utils/auth";
+
 /* ======================
    SPINNER COMPONENT
 ====================== */
@@ -40,14 +42,7 @@ function Spinner({ size = 18 }) {
 /* ======================
    TERMS MODAL
 ====================== */
-function TermsModal({
-  open,
-  onClose,
-  onAgree,
-  agreed,
-  setAgreed,
-  loading,
-}) {
+function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
   if (!open) return null;
 
   return (
@@ -72,42 +67,44 @@ function TermsModal({
           </p>
           <ul className="list-disc pl-5 space-y-2">
             <li>
-              CheckIn supports student well-being using tools like journaling and PHQ-9
-              self-assessment.
+              CheckIn supports student well-being using tools like journaling and
+              PHQ-9 self-assessment.
             </li>
             <li>
-              CheckIn is <span className="font-semibold">not</span> a diagnostic tool and does not
-              replace professional mental health care.
+              CheckIn is <span className="font-semibold">not</span> a diagnostic
+              tool and does not replace professional mental health care.
             </li>
             <li>
-              You are responsible for keeping your account secure and using the platform
-              respectfully.
+              You are responsible for keeping your account secure and using the
+              platform respectfully.
             </li>
             <li>
-              If you are in immediate danger, contact emergency services or your local hotline.
+              If you are in immediate danger, contact emergency services or your
+              local hotline.
             </li>
           </ul>
 
           <div className="mt-5">
             <p className="font-bold text-black/80 mb-2">Full Terms</p>
             <p className="mb-3">
-              By using CheckIn, you agree to follow these terms and to use the platform only for
-              lawful, respectful, and appropriate purposes. You must not misuse the platform, harm
-              others, attempt to access accounts without permission, or interfere with system
-              security.
+              By using CheckIn, you agree to follow these terms and to use the
+              platform only for lawful, respectful, and appropriate purposes.
+              You must not misuse the platform, harm others, attempt to access
+              accounts without permission, or interfere with system security.
             </p>
             <p className="mb-3">
-              CheckIn may store and process information you provide (such as journal entries and
-              PHQ-9 responses) to deliver features, improve performance, and provide support when
-              you request it. Your content is private by default and remains under your control.
+              CheckIn may store and process information you provide (such as
+              journal entries and PHQ-9 responses) to deliver features, improve
+              performance, and provide support when you request it. Your content
+              is private by default and remains under your control.
             </p>
             <p className="mb-3">
-              CheckIn is provided “as is.” While we aim for reliability, we cannot guarantee the
-              service will always be available or error-free.
+              CheckIn is provided “as is.” While we aim for reliability, we
+              cannot guarantee the service will always be available or error-free.
             </p>
             <p>
-              You may stop using CheckIn at any time. We may update these terms when needed. If
-              major changes happen, we may provide notice in the app.
+              You may stop using CheckIn at any time. We may update these terms
+              when needed. If major changes happen, we may provide notice in the app.
             </p>
           </div>
         </div>
@@ -162,23 +159,31 @@ function TermsModal({
   );
 }
 
+function redirectByRole(navigate, role) {
+  if (role === "Admin") return navigate("/admin");
+  if (role === "Consultant") return navigate("/consultant");
+  return navigate("/dashboard"); // Student
+}
+
 export default function Login() {
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(false);
   const [roleLoading, setRoleLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const [showRoleModal, setShowRoleModal] = useState(true);
-  const [role, setRole] = useState("");
+  const [role, setRole] = useState(""); // selected role portal only
+
+  // form state
+  const [emailOrUsername, setEmailOrUsername] = useState("");
+  const [password, setPassword] = useState("");
 
   // TERMS
   const [showTerms, setShowTerms] = useState(false);
   const [termsAgreed, setTermsAgreed] = useState(false);
   const [termsLoading, setTermsLoading] = useState(false);
 
-  /* ======================
-     CHECK SAVED ROLE
-  ====================== */
   useEffect(() => {
     const savedRole = localStorage.getItem("userRole");
     if (savedRole) {
@@ -186,23 +191,23 @@ export default function Login() {
       setShowRoleModal(false);
     }
 
-    // restore terms agreement
     const savedTerms = localStorage.getItem("termsAccepted") === "true";
     setTermsAgreed(savedTerms);
-  }, []);
 
-  /* ======================
-     CONFIRM ROLE
-  ====================== */
+    // auto redirect if already logged in
+    const token = getToken();
+    const user = getUser();
+    if (token && user?.role) {
+      redirectByRole(navigate, user.role);
+    }
+  }, [navigate]);
+
   const confirmRole = () => {
     if (!role) return;
     localStorage.setItem("userRole", role);
     setShowRoleModal(false);
   };
 
-  /* ======================
-     TERMS FLOW HELPERS
-  ====================== */
   const requireTermsThen = async (fn) => {
     if (!termsAgreed) {
       setShowTerms(true);
@@ -221,6 +226,54 @@ export default function Login() {
     }, 500);
   };
 
+  const enforceRoleMatchOrLogout = (dbRole) => {
+    if (role && dbRole && role !== dbRole) {
+      clearAuth();
+      throw new Error(`Role mismatch. Your account is ${dbRole}, not ${role}.`);
+    }
+  };
+
+  /* ======================
+     EMAIL/PASSWORD LOGIN
+  ====================== */
+  const handleEmailLogin = async () => {
+    if (!role) {
+      setShowRoleModal(true);
+      return;
+    }
+
+    await requireTermsThen(async () => {
+      setLoading(true);
+      setError("");
+
+      try {
+        if (!emailOrUsername || !password) {
+          throw new Error("Please enter email/username and password.");
+        }
+
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ emailOrUsername, password }),
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || "Login failed");
+
+        // ✅ store via helper (no scattered localStorage writes)
+        setAuth(data.token, data.user);
+
+        enforceRoleMatchOrLogout(data.user?.role);
+
+        redirectByRole(navigate, data.user.role);
+      } catch (err) {
+        setError(err.message || "Login failed");
+      } finally {
+        setLoading(false);
+      }
+    });
+  };
+
   /* ======================
      GOOGLE LOGIN
   ====================== */
@@ -232,45 +285,43 @@ export default function Login() {
 
     await requireTermsThen(async () => {
       setLoading(true);
-      try {
-        const user = await signInWithGoogle();
-        console.log("Logged in user:", user);
+      setError("");
 
-        navigate("/dashboard", { state: { role } });
-      } catch (error) {
-        console.error(error);
-        alert("Google login failed");
+      try {
+        const firebaseUser = await signInWithGoogle();
+
+        const payload = {
+          googleId: firebaseUser?.uid,
+          email: firebaseUser?.email,
+          fullName: firebaseUser?.displayName || "Google User",
+        };
+
+        const res = await fetch("/api/auth/google", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || "Google login failed");
+
+        // ✅ store via helper
+        setAuth(data.token, data.user);
+
+        enforceRoleMatchOrLogout(data.user?.role);
+
+        redirectByRole(navigate, data.user.role);
+      } catch (err) {
+        setError(err.message || "Google login failed");
       } finally {
         setLoading(false);
       }
     });
   };
 
-  /* ======================
-     EMAIL/PASSWORD LOGIN (UI ONLY)
-     - replace with your real auth when ready
-  ====================== */
-  const handleEmailLogin = async () => {
-    if (!role) {
-      setShowRoleModal(true);
-      return;
-    }
-
-    await requireTermsThen(async () => {
-      // TODO: replace with your own email/password login handler
-      setLoading(true);
-      setTimeout(() => {
-        setLoading(false);
-        navigate("/dashboard", { state: { role } });
-      }, 600);
-    });
-  };
-
   return (
     <div className="relative">
-      {/* ======================
-           TERMS MODAL
-      ====================== */}
+      {/* TERMS MODAL */}
       <TermsModal
         open={showTerms}
         onClose={() => setShowTerms(false)}
@@ -280,9 +331,7 @@ export default function Login() {
         loading={termsLoading}
       />
 
-      {/* ======================
-           ROLE MODAL
-      ====================== */}
+      {/* ROLE MODAL */}
       {showRoleModal && (
         <div className="fixed inset-0 z-[999] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40" />
@@ -294,13 +343,11 @@ export default function Login() {
             <p className="text-[13px] text-muted mt-2">Choose one to continue.</p>
 
             <div className="mt-5 flex flex-col gap-3">
-              {["student", "teacher", "consultant"].map((r) => (
+              {["Student", "Consultant", "Admin"].map((r) => (
                 <label
                   key={r}
                   className={`flex items-center justify-between rounded-[14px] border-2 border-black px-4 py-3 cursor-pointer transition
-                    ${
-                      role === r ? "bg-[#B9FF66]" : "bg-white hover:bg-black/5"
-                    }
+                    ${role === r ? "bg-[#B9FF66]" : "bg-white hover:bg-black/5"}
                   `}
                 >
                   <span className="font-bold capitalize">{r}</span>
@@ -348,9 +395,7 @@ export default function Login() {
         </div>
       )}
 
-      {/* ======================
-           PAGE CONTENT
-      ====================== */}
+      {/* PAGE CONTENT */}
       <div className="flex justify-between gap-[60px] px-[90px] pt-[70px] pb-10 lg:flex-row flex-col items-center">
         {/* LEFT */}
         <section className="w-[420px] mt-[18px] animate-slideIn max-w-[92vw]">
@@ -362,9 +407,28 @@ export default function Login() {
             Welcome. Please enter your details.
           </p>
 
+          {error && (
+            <div className="mb-4 rounded-[14px] border-2 border-black bg-red-50 px-4 py-3 text-[13px] text-black">
+              <span className="font-extrabold">Error:</span> {error}
+            </div>
+          )}
+
           <div className="flex flex-col gap-[6px]">
-            <TextInput label="Email" type="email" placeholder="Enter your email" />
-            <TextInput label="Password" type="password" placeholder="********" />
+            <TextInput
+              label="Email or Username"
+              type="text"
+              placeholder="Enter your email or username"
+              value={emailOrUsername}
+              onChange={(e) => setEmailOrUsername(e.target.value)}
+            />
+
+            <TextInput
+              label="Password"
+              type="password"
+              placeholder="********"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
 
             <div className="flex items-center justify-between text-[13px] mt-2">
               <label className="flex items-center gap-2">
@@ -427,7 +491,8 @@ export default function Login() {
 
             {role && (
               <p className="text-[12px] mt-3">
-                Role: <span className="font-bold capitalize">{role}</span>
+                Role portal:{" "}
+                <span className="font-bold capitalize">{role}</span>
                 <button
                   onClick={() => setShowRoleModal(true)}
                   className="ml-2 underline font-bold"
