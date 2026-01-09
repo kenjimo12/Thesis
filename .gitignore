@@ -21,3 +21,11 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Backend (do not commit)
+Backend/node_modules/
+Backend/.env
+git status
+
+# Ignore inner frontend copy
+Thesis/
