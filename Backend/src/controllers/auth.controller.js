@@ -128,6 +128,8 @@
     }
   }
 
+  
+
   // GET /api/auth/me  (Private)
   function getMe(req, res) {
     // protect middleware sets req.user from DB
@@ -256,5 +258,7 @@
     }
   }
 
-
+  
   module.exports = { register, login, getMe, createUser, googleAuth };
+
+  

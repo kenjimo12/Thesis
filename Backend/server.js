@@ -7,6 +7,7 @@ const morgan = require("morgan");
 
 const connectDB = require("./src/config/db");
 const authRoutes = require("./src/routes/auth.routes");
+const counselingRoutes = require("./src/routes/counseling.routes"); // ✅ move here
 const { notFound, errorHandler } = require("./src/middleware/errormiddleware");
 
 dotenv.config();
@@ -23,11 +24,12 @@ connectDB();
 
 // Routes
 app.use("/api/auth", authRoutes);
+app.use("/api/counseling", counselingRoutes); // ✅ mount BEFORE notFound
 
 // Health check
 app.get("/", (req, res) => res.json({ ok: true, message: "API running" }));
 
-// Error middleware
+// Error middleware (must be LAST)
 app.use(notFound);
 app.use(errorHandler);
 
@@ -42,5 +44,3 @@ const server = app.listen(PORT, "127.0.0.1", () => {
 server.on("error", (err) => {
   console.error("❌ LISTEN ERROR:", err);
 });
-
-
