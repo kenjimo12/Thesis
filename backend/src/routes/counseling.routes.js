@@ -25,6 +25,13 @@ router.get(
   counseling.listRequests
 );
 
+router.patch(
+  "/admin/requests/:id/thread-status",
+  protect,
+  requireRole("Admin", "Counselor"),
+  counseling.setAskThreadStatus
+);
+
 
 router.patch(
   "/admin/requests/:id/approve",

@@ -7,12 +7,38 @@ const CounselingRequestSchema = new mongoose.Schema(
 
     type: { type: String, enum: ["ASK", "MEET"], required: true },
 
+    // ✅ EXISTING request workflow status (DO NOT TOUCH)
     status: {
       type: String,
       enum: ["Pending", "Approved", "Disapproved", "Cancelled", "Completed"],
       default: "Pending",
       index: true,
     },
+
+    // ✅ NEW: Counselor thread lifecycle status (ASK only)
+    threadStatus: {
+      type: String,
+      enum: [
+        "NEW",
+        "UNDER_REVIEW",
+        "APPOINTMENT_REQUIRED",
+        "SCHEDULED",
+        "IN_SESSION",
+        "WAITING_ON_STUDENT",
+        "FOLLOW_UP_REQUIRED",
+        "COMPLETED",
+        "CLOSED",
+
+        // internal / restricted
+        "URGENT",
+        "CRISIS",
+      ],
+      default: "NEW",
+      index: true,
+    },
+
+    threadStatusUpdatedAt: { type: Date },
+    threadStatusUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
     // ASK fields
     topic: { type: String, trim: true },
@@ -26,7 +52,7 @@ const CounselingRequestSchema = new mongoose.Schema(
     reason: { type: String, trim: true },
     date: { type: String }, // YYYY-MM-DD (PH date)
     time: { type: String }, // HH:MM (24h)
-    counselorId: { type: String, trim: true }, // keep string like "C-101" to match frontend
+    counselorId: { type: String, trim: true }, // "C-101"
     notes: { type: String, trim: true },
 
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -43,7 +69,12 @@ const CounselingRequestSchema = new mongoose.Schema(
 // Prevent double-booking by counselor/date/time for MEET when pending/approved
 CounselingRequestSchema.index(
   { counselorId: 1, date: 1, time: 1, type: 1, status: 1 },
-  { partialFilterExpression: { type: "MEET", status: { $in: ["Pending", "Approved"] } } }
+  {
+    partialFilterExpression: {
+      type: "MEET",
+      status: { $in: ["Pending", "Approved"] },
+    },
+  }
 );
 
 module.exports = mongoose.model("CounselingRequest", CounselingRequestSchema);

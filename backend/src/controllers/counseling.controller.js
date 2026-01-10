@@ -296,6 +296,74 @@ exports.replyToAsk = async (req, res) => {
 };
 
 /**
+ * Admin/Counselor: Set ASK thread status (NEW, UNDER_REVIEW, ...)
+ * PATCH /api/counseling/admin/requests/:id/thread-status
+ */
+exports.setAskThreadStatus = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { threadStatus } = req.body || {};
+
+    const ALLOWED = new Set([
+      "NEW",
+      "UNDER_REVIEW",
+      "APPOINTMENT_REQUIRED",
+      "SCHEDULED",
+      "IN_SESSION",
+      "WAITING_ON_STUDENT",
+      "FOLLOW_UP_REQUIRED",
+      "COMPLETED",
+      "CLOSED",
+      "URGENT",
+      "CRISIS",
+    ]);
+
+    if (!threadStatus || !ALLOWED.has(threadStatus)) {
+      return res.status(400).json({
+        code: "INVALID_THREAD_STATUS",
+        message: "Invalid threadStatus.",
+      });
+    }
+
+    const doc = await CounselingRequest.findById(id);
+    if (!doc) {
+      return res.status(404).json({ code: "NOT_FOUND", message: "Request not found." });
+    }
+
+    if (doc.type !== "ASK") {
+      return res.status(400).json({
+        code: "INVALID_TYPE",
+        message: "Only ASK requests can have thread statuses.",
+      });
+    }
+
+    // Role check (match your roles)
+    const role = req.user?.role;
+    const isPrivileged = role === "Admin" || role === "Counselor" || role === "Consultant";
+    if (!isPrivileged) {
+      return res.status(403).json({ message: "Forbidden." });
+    }
+
+    // Optional: restrict internal statuses
+    // if ((threadStatus === "URGENT" || threadStatus === "CRISIS") && role !== "Counselor") {
+    //   return res.status(403).json({ message: "Only Counselor can set URGENT/CRISIS." });
+    // }
+
+    doc.threadStatus = threadStatus;
+    doc.threadStatusUpdatedAt = new Date();
+    doc.threadStatusUpdatedBy = req.user?.id;
+
+    await doc.save();
+
+    return res.json(formatRequest(doc));
+  } catch (err) {
+    console.error("setAskThreadStatus error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+};
+
+
+/**
  * List counselors (for booking)
  * GET /api/counseling/counselors
  */
@@ -438,6 +506,57 @@ exports.getAvailability = async (req, res) => {
     return res.status(500).json({ message: "Server error." });
   }
 };
+
+const THREAD_STATUS_ALLOWED = new Set([
+  "NEW",
+  "UNDER_REVIEW",
+  "APPOINTMENT_REQUIRED",
+  "SCHEDULED",
+  "IN_SESSION",
+  "WAITING_ON_STUDENT",
+  "FOLLOW_UP_REQUIRED",
+  "COMPLETED",
+  "CLOSED",
+  "URGENT",
+  "CRISIS",
+]);
+
+exports.setAskThreadStatus = async (req, res) => {
+  try {
+    const { id } = req.params; // request id
+    const { status } = req.body || {};
+
+    if (!status || !THREAD_STATUS_ALLOWED.has(String(status))) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
+
+    const doc = await CounselingRequest.findById(id);
+    if (!doc) return res.status(404).json({ message: "Request not found" });
+
+    // Only ASK requests have threadStatus
+    if (doc.type !== "ASK") {
+      return res.status(400).json({ message: "threadStatus can only be set for ASK requests" });
+    }
+
+    doc.threadStatus = String(status);
+    doc.threadStatusUpdatedAt = new Date();
+    doc.threadStatusUpdatedBy = req.user?.id;
+
+    await doc.save();
+
+    return res.json({
+      ok: true,
+      id: doc._id,
+      threadStatus: doc.threadStatus,
+      threadStatusUpdatedAt: doc.threadStatusUpdatedAt,
+      threadStatusUpdatedBy: doc.threadStatusUpdatedBy,
+    });
+  } catch (err) {
+    console.error("setAskThreadStatus error:", err);
+    return res.status(500).json({ message: "Server error." });
+  }
+};
+
 
 // ---------- local helpers for availability ----------
 function toMinutes(hhmm) {
