@@ -1,3 +1,4 @@
+// src/routes/AppRoutes.js
 import { Routes, Route } from "react-router-dom";
 import MainLayout from "../layouts/MainLayout";
 
@@ -8,20 +9,24 @@ import AboutUs from "../pages/AboutUs";
 import PrivacyPolicy from "../pages/PrivacyPolicy";
 
 import GuidanceCounseling from "../pages/Services/GuidanceCounseling";
+import Request from "../pages/Services/SessionType/Request";
+import ViewRequest from "../pages/Services/SessionType/ViewRequest";
+
 import Journal from "../pages/Services/Journal";
 import Assessment from "../pages/Services/Assessment";
 import Emergency from "../pages/Services/Emergency";
 
 import ScrollToTop from "../components/ScrollToTop";
 
-// ✅ add these imports
-import ProtectedRoute from "../routes/ProtectedRoute";
-import RequireRole from "../routes/RequireRole";
+// Guards
+
 import Unauthorized from "../pages/Unauthorized";
 
-// ✅ OPTIONAL: Only import these when you already have them
-// import AdminDashboard from "../pages/Admin/AdminDashboard";
-// import ConsultantDashboard from "../pages/Consultant/ConsultantDashboard";
+// Students
+import ProfileSettings from "../pages/Student/ProfileSettings";
+
+// Admin page
+import CounselorDashboard from "../pages/CounselorDashboard/CounselorDashboard";
 
 export default function AppRoutes() {
   return (
@@ -32,6 +37,7 @@ export default function AppRoutes() {
         {/* =======================
             PUBLIC (NO TOKEN NEEDED)
            ======================= */}
+           <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
         <Route element={<MainLayout />}>
           <Route path="/login" element={<Login />} />
           <Route path="/sign-up" element={<Signup />} />
@@ -41,7 +47,7 @@ export default function AppRoutes() {
         {/* =======================
             PROTECTED (TOKEN REQUIRED)
            ======================= */}
-        <Route element={<ProtectedRoute />}>
+        {/* =<Route element={<ProtectedRoute />}>  remove this when api is ready     */}
           <Route element={<MainLayout />}>
             {/* General protected pages (any logged-in role) */}
             <Route path="/" element={<LandingPage />} />
@@ -50,29 +56,27 @@ export default function AppRoutes() {
 
             {/* Services Pages (any logged-in role) */}
             <Route path="/services/counseling" element={<GuidanceCounseling />} />
+            <Route path="/services/counseling/request" element={<Request />} />
+            <Route path="/services/counseling/requests" element={<ViewRequest />} />
+
             <Route path="/services/journal" element={<Journal />} />
             <Route path="/services/assessment" element={<Assessment />} />
             <Route path="/services/emergency" element={<Emergency />} />
 
+            <Route path="/student/profilesettings" element={<ProfileSettings/>} />
+            
             {/* =======================
-                ROLE-BASED (UNCOMMENT WHEN READY)
+                ROLE-BASED
                ======================= */}
+            {/*<{/*Route element={<RequireRole allowedRoles={["Admin"]} />}>
+              
+            </Route>*/}
 
-            {/* ✅ Admin only */}
-            {/*
-            <Route element={<RequireRole allowedRoles={["Admin"]} />}>
-              <Route path="/admin" element={<AdminDashboard />} />
-            </Route>
-            */}
-
-            {/* ✅ Consultant only */}
-            {/*
-            <Route element={<RequireRole allowedRoles={["Consultant"]} />}>
-              <Route path="/consultant" element={<ConsultantDashboard />} />
-            </Route>
-            */}
+            
+         
           </Route>
-        </Route>
+        {/*</Route>*/}
+
       </Routes>
     </>
   );

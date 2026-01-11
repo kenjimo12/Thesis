@@ -8,3 +8,13 @@
   html, body { height: 100%; }
   body { @apply font-poppins text-text bg-white text-[16px]; }
 }
+
+@keyframes msgSlideInLeft {
+  from { transform: translateX(14px); opacity: 0.6; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes msgSlideInRight {
+  from { transform: translateX(-14px); opacity: 0.6; }
+  to   { transform: translateX(0); opacity: 1; }
+}
