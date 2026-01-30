@@ -10,27 +10,23 @@ import AboutUs from "../pages/AboutUs";
 import PrivacyPolicy from "../pages/PrivacyPolicy";
 
 import GuidanceCounseling from "../pages/Services/GuidanceCounseling";
-// src/routes/AppRoutes.js
 import Request from "../pages/Services/SessionType/Request";
 import ViewRequest from "../pages/Services/SessionType/ViewRequest";
-
 
 import Journal from "../pages/Services/Journal";
 import Assessment from "../pages/Services/Assessment";
 import Emergency from "../pages/Services/Emergency";
 
 import ScrollToTop from "../components/ScrollToTop";
-
-
-
-
 import Unauthorized from "../pages/Unauthorized";
 
 // Students
 import ProfileSettings from "../pages/Student/ProfileSettings";
 
-// Admin page
+// Admin/Counselor page
 import CounselorDashboard from "../pages/CounselorDashboard/CounselorDashboard";
+
+import ProtectedRoute from "./ProtectedRoute";
 
 export default function AppRoutes() {
   return (
@@ -41,47 +37,41 @@ export default function AppRoutes() {
         {/* =======================
             PUBLIC (NO TOKEN NEEDED)
            ======================= */}
-           <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
         <Route element={<MainLayout />}>
+          {/* Public auth pages */}
           <Route path="/login" element={<Login />} />
           <Route path="/sign-up" element={<Signup />} />
           <Route path="/forgotpassword" element={<ForgotPassword />} />
-
           <Route path="/unauthorized" element={<Unauthorized />} />
+
+          {/* ✅ Public pages */}
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/about-us" element={<AboutUs />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/services/emergency" element={<Emergency />} />
         </Route>
 
         {/* =======================
             PROTECTED (TOKEN REQUIRED)
            ======================= */}
-        {/* =<Route element={<ProtectedRoute />}>  remove this when api is ready     */}
+        <Route element={<ProtectedRoute />}>
           <Route element={<MainLayout />}>
-            {/* General protected pages (any logged-in role) */}
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/about-us" element={<AboutUs />} />
-            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
-
-            {/* Services Pages (any logged-in role) */}
+            {/* ✅ Restricted: Guidance Counseling */}
             <Route path="/services/counseling" element={<GuidanceCounseling />} />
             <Route path="/services/counseling/request" element={<Request />} />
             <Route path="/services/counseling/requests" element={<ViewRequest />} />
 
+            {/* ✅ Restricted: Other services */}
             <Route path="/services/journal" element={<Journal />} />
             <Route path="/services/assessment" element={<Assessment />} />
-            <Route path="/services/emergency" element={<Emergency />} />
 
-            <Route path="/profile-settings" element={<ProfileSettings />} />            
-            {/* =======================
-                ROLE-BASED
-               ======================= */}
-            {/*<{/*Route element={<RequireRole allowedRoles={["Admin"]} />}>
-              
-            </Route>*/}
+            {/* ✅ Restricted: Student page */}
+            <Route path="/profile-settings" element={<ProfileSettings />} />
 
-            
-         
+            {/* ✅ Restricted: Counselor dashboard (keep protected if you want) */}
+            <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
           </Route>
-        {/*</Route>*/}
-
+        </Route>
       </Routes>
     </>
   );

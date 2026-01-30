@@ -1,6 +1,14 @@
-export default function GoogleButton({ onClick, loading }) {
+// src/components/GoogleButton.jsx
+
+export default function GoogleButton({
+  onClick,
+  loading,
+  label = "Login with Google",
+  loadingLabel = "Signing in...",
+}) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={loading}
       className="
@@ -14,7 +22,7 @@ export default function GoogleButton({ onClick, loading }) {
       "
     >
       <span className="text-[16px] font-black">G</span>
-      {loading ? "Signing in..." : "Login with Google"}
+      {loading ? loadingLabel : label}
     </button>
   );
 }

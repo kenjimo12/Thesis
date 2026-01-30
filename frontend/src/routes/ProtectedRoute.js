@@ -1,27 +1,42 @@
-import { Routes, Route } from "react-router-dom";
-import ProtectedRoute from "./routes/ProtectedRoute"; // adjust path
+// src/routes/ProtectedRoute.js
+import { useEffect } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
-import GuidanceCounseling from "./pages/GuidanceCounseling";
-import MoodTracker from "./pages/Journal";
-import WellnessCheck from "./pages/Assessment";
+function isAuthenticated() {
+  const token =
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("token") ||
+    localStorage.getItem("accessToken") ||
+    sessionStorage.getItem("accessToken");
 
-export default function App() {
-  return (
-    <Routes>
-      {/* public routes */}
-      {/* <Route path="/" element={<Home />} /> */}
-      {/* <Route path="/login" element={<Login />} /> */}
-      {/* <Route path="/sign-up" element={<Signup />} /> */}
+  const user = localStorage.getItem("user") || sessionStorage.getItem("user");
 
-      {/* ✅ protected routes */}
-      <Route element={<ProtectedRoute />}>
-        <Route path="/guidancecounseling" element={<GuidanceCounseling />} />
-        <Route path="/assessment" element={<MoodTracker />} />
-        <Route path="/journal" element={<WellnessCheck />} />
-      </Route>
+  return Boolean(token || user);
+}
 
-      {/* fallback */}
-      {/* <Route path="*" element={<NotFound />} /> */}
-    </Routes>
-  );
+export default function ProtectedRoute() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const authed = isAuthenticated();
+
+  useEffect(() => {
+    if (authed) return;
+
+    // ✅ Keep them on a safe/current page, NOT the restricted one
+    const lastSafe = sessionStorage.getItem("last_safe_path") || "/";
+
+    navigate(lastSafe, {
+      replace: true,
+      state: {
+        authRequired: true,
+        intended: location.pathname,
+        message: "You are not logged in. Please log in to access this feature.",
+      },
+    });
+  }, [authed, navigate, location.pathname]);
+
+  // Block restricted route content
+  if (!authed) return null;
+
+  return <Outlet />;
 }

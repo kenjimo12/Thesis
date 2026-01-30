@@ -1,5 +1,7 @@
 // src/pages/ProfileSettings.js
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 
 const PRIMARY_GREEN = "#B9FF66";
 const GREEN_GLOW = "rgba(185, 255, 102, 0.22)";
@@ -16,6 +18,7 @@ const DEFAULT_PROFILE = {
   email: "student@pup.edu.ph",
   campus: "Andres Bonifacio Campus",
   course: "Bachelor of Science in Information Technology",
+  dateJoined: "1/29/2025"
 };
 
 const SECTIONS = [
@@ -27,6 +30,7 @@ const SECTIONS = [
       { label: "Last Name", key: "lastName" },
       { label: "Student ID", key: "studentId", mono: true, breakAll: true },
       { label: "Email", key: "email", breakAll: true },
+      { label: " Date", key: "dateJoined", mono: true, breakAll: true }
     ],
   },
   {
@@ -44,7 +48,146 @@ function safeText(value) {
   return String(value);
 }
 
+/* ======================
+  LOGOUT: clear auth storage
+  - removes common keys from BOTH storages
+  - triggers auth:changed so Navbar updates instantly
+====================== */
+function clearAuthEverywhere() {
+  const KEYS = [
+    // common
+    "token",
+    "user",
+    // project-ish common patterns
+    "checkin:token",
+    "checkin:user",
+    "checkin_auth_token",
+    "checkin_auth_user",
+    "auth:token",
+    "auth:user",
+    "accessToken",
+    "refreshToken",
+    "profile",
+  ];
+
+  for (const k of KEYS) {
+    try {
+      localStorage.removeItem(k);
+    } catch {}
+    try {
+      sessionStorage.removeItem(k);
+    } catch {}
+  }
+
+  // If your app stores other auth flags, remove them too:
+  try {
+    localStorage.removeItem("termsAccepted");
+  } catch {}
+
+  // Let React/UI know auth changed (Navbar / ProtectedRoute etc.)
+  window.dispatchEvent(new Event("auth:changed"));
+}
+
+/* ======================
+  CONFIRM MODAL (PORTAL)
+====================== */
+function ConfirmLogoutModal({ open, onClose, onConfirm, busy = false }) {
+  const modalRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (!busy) onClose();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    requestAnimationFrame(() => modalRef.current?.focus?.());
+
+    // lock scroll
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.overflow;
+    const prevBody = body.style.overflow;
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      html.style.overflow = prevHtml;
+      body.style.overflow = prevBody;
+    };
+  }, [open, onClose, busy]);
+
+  if (!open) return null;
+
+  const content = (
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center p-3 sm:p-6">
+      <div
+        className="absolute inset-0 bg-black/45"
+        onClick={() => !busy && onClose()}
+        aria-hidden="true"
+      />
+
+      <div
+        ref={modalRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="logout-title"
+        className="relative w-full max-w-[520px] rounded-[22px] border-4 border-black bg-white shadow-[0_18px_0_rgba(0,0,0,0.18)] overflow-hidden"
+      >
+        <div className="p-5 sm:p-6 border-b border-black/10">
+          <h2
+            id="logout-title"
+            className="text-[16px] sm:text-[18px] font-extrabold tracking-[0.12em]"
+          >
+            LOG OUT
+          </h2>
+          <p className="text-[13px] text-black/60 mt-2">
+            Are you sure you want to log out?
+          </p>
+        </div>
+
+        <div className="p-5 sm:p-6 text-[13px] sm:text-[14px] leading-relaxed text-black/80">
+          You’ll be redirected to the login page and your session will be cleared on this device.
+        </div>
+
+        <div className="p-5 sm:p-6 border-t border-black/10 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="px-5 py-2 text-[13px] font-extrabold rounded-[12px] border-2 border-black bg-white hover:bg-black/5
+                       focus:outline-none focus-visible:ring-2 focus-visible:ring-black/25 disabled:opacity-60"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            className="px-5 py-2 text-[13px] font-extrabold rounded-[12px] border-2 border-black bg-black text-white
+                       hover:opacity-90 active:scale-[0.99]
+                       focus:outline-none focus-visible:ring-2 focus-visible:ring-black/25 disabled:opacity-60"
+          >
+            {busy ? "Logging out…" : "Log out"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(content, document.body);
+}
+
 export default function ProfileSettings({ profile }) {
+  const navigate = useNavigate();
+
   const data = profile ?? DEFAULT_PROFILE;
 
   const resolved = useMemo(() => {
@@ -53,6 +196,7 @@ export default function ProfileSettings({ profile }) {
       items: section.items.map((it) => ({ ...it, value: safeText(data[it.key]) })),
     }));
   }, [data]);
+
 
   return (
     <div
@@ -63,33 +207,43 @@ export default function ProfileSettings({ profile }) {
         "pt-[max(2.75rem,env(safe-area-inset-top))] sm:pt-14 lg:pt-16",
       ].join(" ")}
     >
+
       <div className="w-full max-w-4xl xl:max-w-5xl">
         <div
           className="relative overflow-hidden rounded-2xl border border-gray-200/70 bg-white shadow-xl"
           role="region"
           aria-labelledby="profile-settings-title"
         >
-          <div className="absolute inset-0 pointer-events-none" style={{ boxShadow: `0 0 0 6px ${GREEN_GLOW}` }} aria-hidden="true" />
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{ boxShadow: `0 0 0 6px ${GREEN_GLOW}` }}
+            aria-hidden="true"
+          />
 
           <div className="relative px-4 sm:px-7 lg:px-9 py-7 sm:py-9">
             <div className="h-2 sm:h-3" aria-hidden="true" />
 
             <header className="max-w-3xl mx-auto sm:mx-0 text-center sm:text-left">
-              <h1
-                id="profile-settings-title"
-                className="font-extrabold tracking-tight text-2xl sm:text-3xl lg:text-[34px] break-words leading-tight"
-                style={{ fontFamily: "Nunito, sans-serif", color: TEXT_MAIN }}
-              >
-                Profile Settings
-              </h1>
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                <div className="min-w-0">
+                  <h1
+                    id="profile-settings-title"
+                    className="font-extrabold tracking-tight text-2xl sm:text-3xl lg:text-[34px] break-words leading-tight"
+                    style={{ fontFamily: "Nunito, sans-serif", color: TEXT_MAIN }}
+                  >
+                    Profile Settings
+                  </h1>
 
-              <p
-                className="mt-2.5 text-sm sm:text-base text-gray-600 break-words leading-relaxed"
-                style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}
-              >
-                This information is <strong style={{ color: TEXT_MAIN }}>read-only</strong>. Corrections must be
-                requested via the <strong style={{ color: TEXT_MAIN }}>Guidance Office</strong>.
-              </p>
+                  <p
+                    className="mt-2.5 text-sm sm:text-base text-gray-600 break-words leading-relaxed"
+                    style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}
+                  >
+                    This information is <strong style={{ color: TEXT_MAIN }}>read-only</strong>. Corrections must be
+                    requested via the <strong style={{ color: TEXT_MAIN }}>Guidance Office</strong>.
+                  </p>
+                </div>
+
+              </div>
 
               <div className="mt-4 flex justify-center sm:justify-start gap-2.5 flex-wrap">
                 <span
@@ -247,7 +401,10 @@ export default function ProfileSettings({ profile }) {
                     </h3>
                   </div>
 
-                  <p className="mt-1.5 text-sm break-words leading-relaxed" style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}>
+                  <p
+                    className="mt-1.5 text-sm break-words leading-relaxed"
+                    style={{ fontFamily: "Lora, serif", color: TEXT_MUTED }}
+                  >
                     Report any incorrect information directly to the{" "}
                     <strong style={{ color: TEXT_MAIN }}>Guidance Office</strong>.
                   </p>

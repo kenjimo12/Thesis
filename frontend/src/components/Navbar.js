@@ -1,6 +1,8 @@
 // src/components/Navbar.js
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
+import { getToken, getUser, clearAuth} from "../utils/auth";
+
 
 // ✅ adjust path if needed
 import logoOutlined from "../assets/logo-outlined 1.png";
@@ -18,25 +20,6 @@ function PhoneIcon({ className = "" }) {
       <path
         d="M6.6 10.8c1.7 3.2 3.4 4.9 6.6 6.6l2.2-2.2c.3-.3.8-.4 1.2-.2 1 .4 2.2.7 3.4.8.5.1.9.5.9 1v3.5c0 .6-.5 1-1.1 1C11 21.3 2.7 13 2.7 2.2c0-.6.4-1.1 1-1.1h3.5c.5 0 .9.4 1 .9.2 1.2.4 2.3.8 3.4.1.4 0 .9-.3 1.2L6.6 10.8z"
         fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-/** Gear / Settings SVG */
-function SettingsIcon({ className = "" }) {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="none">
-      <path
-        d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"
-        stroke="currentColor"
-        strokeWidth="2.2"
-      />
-      <path
-        d="M19.4 13.1c.05-.36.1-.73.1-1.1s-.05-.74-.1-1.1l1.7-1.3a.9.9 0 0 0 .2-1.2l-1.6-2.8a.9.9 0 0 0-1.1-.4l-2 .8a8 8 0 0 0-1.9-1.1l-.3-2.1A.9.9 0 0 0 13.5 1h-3a.9.9 0 0 0-.9.8l-.3 2.1c-.7.3-1.3.6-1.9 1.1l-2-.8a.9.9 0 0 0-1.1.4L2.7 7.4a.9.9 0 0 0 .2 1.2l1.7 1.3c-.05.36-.1.73-.1 1.1s.05.74.1 1.1L2.9 14.4a.9.9 0 0 0-.2 1.2l1.6 2.8c.2.4.7.5 1.1.4l2-.8c.6.5 1.2.8 1.9 1.1l.3 2.1c.1.4.5.8.9.8h3c.4 0 .8-.3.9-.8l.3-2.1c.7-.3 1.3-.6 1.9-1.1l2 .8c.4.1.9 0 1.1-.4l1.6-2.8a.9.9 0 0 0-.2-1.2l-1.7-1.3Z"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinejoin="round"
       />
     </svg>
   );
@@ -72,21 +55,97 @@ function useOnClickOutside(ref, handler) {
   }, [ref, handler]);
 }
 
+/* ======================
+  AVATAR (fallback)
+====================== */
+function AvatarFallback({ name = "User", className = "" }) {
+  const parts = String(name).trim().split(/\s+/);
+  const initials = (parts[0]?.[0] ?? "U") + (parts[1]?.[0] ?? "");
+
+  return (
+    <div
+      className={[
+        "h-full w-full rounded-full",
+        "bg-black text-white",
+        "flex items-center justify-center",
+        "font-extrabold text-[13px] select-none",
+        className,
+      ].join(" ")}
+    >
+      {initials.toUpperCase()}
+    </div>
+  );
+}
+
+
+
 export default function Navbar() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const isSignup = pathname.startsWith("/sign-up");
 
   const [open, setOpen] = useState(false); // mobile menu
   const [servicesOpen, setServicesOpen] = useState(false); // desktop dropdown
   const [servicesMobileOpen, setServicesMobileOpen] = useState(false); // mobile accordion
 
+  // ✅ avatar dropdown
+  const [userOpen, setUserOpen] = useState(false);
+  const userRef = useRef(null);
+  useOnClickOutside(userRef, () => setUserOpen(false));
+
   const servicesRef = useRef(null);
   useOnClickOutside(servicesRef, () => setServicesOpen(false));
+
+
+
+// ✅ canonical user info from auth.js
+const DEFAULT_USER = { name: "Student", email: "student@pup.edu.ph" };
+
+const readUser = () => {
+  const u = getUser();
+  if (!u) return DEFAULT_USER;
+
+  const name =
+    u?.name ||
+    [u?.firstName, u?.lastName].filter(Boolean).join(" ") ||
+    u?.fullName ||
+    u?.username ||
+    "Student";
+
+  const email = u?.email || "student@pup.edu.ph";
+
+  return { name, email };
+};
+
+
+
+  // ✅ auth: re-render when auth changes (login/logout without refresh)
+  const [isAuthed, setIsAuthed] = useState(() => !!getToken());
+  const [userInfo, setUserInfo] = useState(() => (getToken() ? readUser() : DEFAULT_USER));
+
+  useEffect(() => {
+    const sync = () => {
+      const authed = !!getToken();
+      setIsAuthed(authed);
+      setUserInfo(authed ? readUser() : DEFAULT_USER);
+    };
+
+    sync();
+    window.addEventListener("auth:changed", sync);
+    window.addEventListener("storage", sync);
+
+    return () => {
+      window.removeEventListener("auth:changed", sync);
+      window.removeEventListener("storage", sync);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     setOpen(false);
     setServicesOpen(false);
     setServicesMobileOpen(false);
+    setUserOpen(false);
   }, [pathname]);
 
   const services = [
@@ -123,14 +182,14 @@ export default function Navbar() {
   ];
 
   const isServicesActive = pathname.startsWith("/services");
-
-  // ✅ route path for profile settings
   const accountTo = "/profile-settings";
 
-  // ✅ Emergency number (911)
-  const EMERGENCY_TEL = "911";
-  // Use tel:911 (works on most mobile devices). Desktop browsers may not call.
-  const emergencyHref = `tel:${EMERGENCY_TEL}`;
+
+  const doLogout = () => {
+    setUserOpen(false);
+    clearAuth(); // ✅ fires auth:changed (from your updated auth.js)
+    navigate("/login", { replace: true });
+  };
 
   return (
     <header className="sticky top-0 z-50 w-full">
@@ -144,8 +203,6 @@ export default function Navbar() {
                 alt="CheckIn"
                 className="h-[40px] sm:h-[46px] lg:h-[50px] w-auto object-contain"
               />
-
-              
             </NavLink>
 
             {/* DESKTOP NAV */}
@@ -241,9 +298,7 @@ export default function Navbar() {
                               </div>
 
                               <div className="flex-1 leading-tight">
-                                <div className="text-[14px] font-extrabold text-[#141414]">
-                                  {s.label}
-                                </div>
+                                <div className="text-[14px] font-extrabold text-[#141414]">{s.label}</div>
                                 <div className="text-[12px] text-black/55 mt-1">{s.desc}</div>
                               </div>
 
@@ -290,143 +345,128 @@ export default function Navbar() {
                 ))}
               </nav>
 
-              {/* AUTH + SETTINGS + CALL */}
+              {/* AUTH + AVATAR + CALL */}
               <div className="flex items-center gap-3">
-                {/* login/sign-up pill */}
-                <div className="relative inline-flex h-10 rounded-full border-2 border-[#8b8b8b] bg-white overflow-hidden">
-                  <div
-                    className={`absolute top-0 bottom-0 w-1/2 bg-[#B9FF66] transition-transform duration-300 ease-out ${
-                      isSignup ? "translate-x-full" : "translate-x-0"
-                    }`}
-                  />
-                  <div className="absolute top-0 bottom-0 left-1/2 w-[2px] -translate-x-1/2 bg-[#8b8b8b]" />
+                {/* login/sign-up pill (hide when logged in) */}
+                {!isAuthed && (
+                  <div className="relative inline-flex h-10 rounded-full border-2 border-[#8b8b8b] bg-white overflow-hidden">
+                    <div
+                      className={`absolute top-0 bottom-0 w-1/2 bg-[#B9FF66] transition-transform duration-300 ease-out ${
+                        isSignup ? "translate-x-full" : "translate-x-0"
+                      }`}
+                    />
+                    <div className="absolute top-0 bottom-0 left-1/2 w-[2px] -translate-x-1/2 bg-[#8b8b8b]" />
 
-                  <NavLink
-                    to="/login"
-                    end
-                    className={({ isActive }) =>
-                      `relative z-10 inline-flex items-center justify-center w-28 text-[14px] font-extrabold ${
-                        isActive ? "text-[#141414]" : "text-[#141414]/80"
-                      }`
-                    }
-                  >
-                    Login
-                  </NavLink>
+                    <NavLink
+                      to="/login"
+                      end
+                      className={({ isActive }) =>
+                        `relative z-10 inline-flex items-center justify-center w-28 text-[14px] font-extrabold ${
+                          isActive ? "text-[#141414]" : "text-[#141414]/80"
+                        }`
+                      }
+                    >
+                      Login
+                    </NavLink>
 
-                  <NavLink
-                    to="/sign-up"
-                    className={({ isActive }) =>
-                      `relative z-10 inline-flex items-center justify-center w-28 text-[14px] font-extrabold ${
-                        isActive ? "text-[#141414]" : "text-[#141414]/80"
-                      }`
-                    }
-                  >
-                    Sign-up
-                  </NavLink>
-                </div>
+                    <NavLink
+                      to="/sign-up"
+                      className={({ isActive }) =>
+                        `relative z-10 inline-flex items-center justify-center w-28 text-[14px] font-extrabold ${
+                          isActive ? "text-[#141414]" : "text-[#141414]/80"
+                        }`
+                      }
+                    >
+                      Sign-up
+                    </NavLink>
+                  </div>
+                )}
 
-                {/* ✅ Account Settings icon (DESKTOP ONLY) */}
-                <NavLink
-                  to={accountTo}
-                  aria-label="Account settings"
-                  className="
-                    relative h-10 w-10
-                    rounded-full
-                    bg-[#B9FF66]
-                    flex items-center justify-center
-                    shadow-md
-                    transition-all duration-300
-                    hover:scale-110 hover:-translate-y-[1px]
-                    active:scale-95
-                    border border-black/10
-                  "
-                >
-                  <span className="relative z-10 text-black">
-                    <SettingsIcon className="h-[18px] w-[18px]" />
-                  </span>
-                </NavLink>
+{/* ✅ AVATAR DROPDOWN */}
+{isAuthed && (
+  <div className="relative" ref={userRef}>
+    {/* ✅ CARD / PILL TRIGGER (NO SHADOW) */}
+    <button
+      type="button"
+      onClick={() => setUserOpen((v) => !v)}
+      aria-haspopup="menu"
+      aria-expanded={userOpen}
+      className={[
+        "group",
+        "h-11 sm:h-12",
+        "px-3 sm:px-4",
+        "rounded-2xl",
+        "bg-white",
+        "border-2 border-black/20",
+        "inline-flex items-center gap-3",
+        "max-w-[260px] sm:max-w-[300px]",
+        "transition-all duration-200",
+        "hover:border-black/45",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-black/25",
+      ].join(" ")}
+      title="Account"
+    >
+      {/* ✅ avatar circle (same size as yours: 40x40) */}
+      <div className="h-10 w-10 rounded-full overflow-hidden border-2 border-black/15 shrink-0">
+        <AvatarFallback name={userInfo.name} />
+      </div>
 
-                {/* ✅ Emergency call icon (911) */}
-                <a
-                  href={emergencyHref}
-                  aria-label={`Call emergency ${EMERGENCY_TEL}`}
-                  className="
-                    relative h-10 w-10
-                    rounded-full
-                    bg-[#F59E0B]
-                    flex items-center justify-center
-                    shadow-md
-                    transition-all duration-300
-                    hover:scale-110 hover:-translate-y-[1px]
-                    active:scale-95
-                  "
-                  title={`Call ${EMERGENCY_TEL}`}
-                >
-                  <span className="absolute inset-0 rounded-full bg-[#F59E0B]/30 animate-ping" />
-                  <span className="relative z-10 text-white">
-                    <PhoneIcon className="h-[18px] w-[18px]" />
-                  </span>
-                </a>
+      {/* ✅ name only (no email) */}
+      <div className="min-w-0 text-left leading-[1.15]">
+        <div className="text-[13px] font-extrabold text-[#141414] truncate">
+          {userInfo.name}
+        </div>
+      </div>
+
+      {/* chevron */}
+      <ChevronDown
+        className={[
+          "h-[18px] w-[18px] shrink-0",
+          "text-black/60 group-hover:text-black/80",
+          "transition-transform duration-200",
+          userOpen ? "rotate-180" : "rotate-0",
+        ].join(" ")}
+      />
+    </button>
+
+    {/* ✅ DROPDOWN (no email) */}
+    <div
+      className={["absolute right-0 top-full pt-3", userOpen ? "block" : "hidden"].join(" ")}
+    >
+      <div className="w-56 rounded-2xl border border-black/10 bg-white shadow-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-black/10">
+          <div className="text-[13px] font-extrabold text-[#141414] truncate">
+            {userInfo.name}
+          </div>
+        </div>
+
+        <div className="p-2">
+          <NavLink
+            to={accountTo}
+            onClick={() => setUserOpen(false)}
+            className="block w-full p-2 rounded-xl text-[13px] font-extrabold text-[#141414] hover:bg-black/5 transition"
+          >
+            Profile settings
+          </NavLink>
+
+          <button
+            type="button"
+            onClick={doLogout}
+            className="mt-1 block w-full text-left p-2 rounded-xl text-[13px] font-extrabold text-[#C62828] hover:bg-[#C62828]/10 transition"
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
               </div>
             </div>
 
             {/* MOBILE RIGHT */}
-            <div className="lg:hidden flex items-center gap-3">
-              {/* ✅ Settings icon hidden on Mobile/Tablet (removed) */}
-
-              {/* ✅ Emergency call icon (911) */}
-              <a
-                href={emergencyHref}
-                aria-label={`Call emergency ${EMERGENCY_TEL}`}
-                className="
-                  relative h-11 w-11
-                  rounded-full
-                  bg-[#F59E0B]
-                  flex items-center justify-center
-                  shadow-md
-                  transition-all duration-300
-                  hover:scale-110 hover:-translate-y-[1px]
-                  active:scale-95
-                "
-                title={`Call ${EMERGENCY_TEL}`}
-              >
-                <span className="absolute inset-0 rounded-full bg-[#F59E0B]/30 animate-ping" />
-                <span className="relative z-10 text-white">
-                  <PhoneIcon className="h-[20px] w-[20px]" />
-                </span>
-              </a>
-
-              <button
-                type="button"
-                onClick={() => setOpen((v) => !v)}
-                aria-label="Toggle menu"
-                aria-expanded={open}
-                className="
-                  h-11 w-11 rounded-full
-                  border-2 border-black/15
-                  inline-flex items-center justify-center
-                  hover:bg-black/5 transition
-                "
-              >
-                <div className="relative w-6 h-6">
-                  <span
-                    className={`absolute left-0 right-0 h-[2px] bg-[#141414] transition-all duration-200 ${
-                      open ? "top-3 rotate-45" : "top-1"
-                    }`}
-                  />
-                  <span
-                    className={`absolute left-0 right-0 h-[2px] bg-[#141414] transition-all duration-200 ${
-                      open ? "opacity-0" : "top-3 opacity-100"
-                    }`}
-                  />
-                  <span
-                    className={`absolute left-0 right-0 h-[2px] bg-[#141414] transition-all duration-200 ${
-                      open ? "top-3 -rotate-45" : "top-5"
-                    }`}
-                  />
-                </div>
-              </button>
-            </div>
+          
           </div>
         </div>
 
@@ -460,14 +500,8 @@ export default function Navbar() {
                   }`}
                   aria-expanded={servicesMobileOpen}
                 >
-                  <span className={isServicesActive ? "font-extrabold" : "font-semibold"}>
-                    Services
-                  </span>
-                  <ChevronDown
-                    className={`h-[18px] w-[18px] transition ${
-                      servicesMobileOpen ? "rotate-180" : ""
-                    }`}
-                  />
+                  <span className={isServicesActive ? "font-extrabold" : "font-semibold"}>Services</span>
+                  <ChevronDown className={`h-[18px] w-[18px] transition ${servicesMobileOpen ? "rotate-180" : ""}`} />
                 </button>
 
                 <div
@@ -487,12 +521,7 @@ export default function Navbar() {
                         }
                       >
                         <div className="h-10 w-10 rounded-xl bg-white border border-black/10 overflow-hidden flex items-center justify-center shrink-0">
-                          <img
-                            src={s.img}
-                            alt={s.label}
-                            className="h-7 w-7 object-contain"
-                            draggable="false"
-                          />
+                          <img src={s.img} alt={s.label} className="h-7 w-7 object-contain" draggable="false" />
                         </div>
                         <span>{s.label}</span>
                       </NavLink>
@@ -515,42 +544,55 @@ export default function Navbar() {
                   </NavLink>
                 ))}
 
-                <NavLink
-                  to={accountTo}
-                  className={({ isActive }) =>
-                    `rounded-xl px-3 py-3 transition hover:bg-black/5 flex items-center justify-between ${
-                      isActive ? "bg-[#B9FF66]/60 font-extrabold" : ""
-                    }`
-                  }
-                >
-                  <span>Account settings</span>
-                  <SettingsIcon className="h-[18px] w-[18px] text-black/60" />
-                </NavLink>
+                {isAuthed && (
+                  <>
+                    <NavLink
+                      to={accountTo}
+                      className={({ isActive }) =>
+                        `rounded-xl px-3 py-3 transition hover:bg-black/5 flex items-center justify-between ${
+                          isActive ? "bg-[#B9FF66]/60 font-extrabold" : ""
+                        }`}
+                    >
+                      <span>Profile settings</span>
+                      <span className="text-black/60">›</span>
+                    </NavLink>
+
+                    <button
+                      type="button"
+                      onClick={doLogout}
+                      className="rounded-xl px-3 py-3 transition hover:bg-[#C62828]/10 text-left font-extrabold text-[#C62828]"
+                    >
+                      Sign out
+                    </button>
+                  </>
+                )}
               </nav>
 
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <NavLink
-                  to="/login"
-                  className={({ isActive }) =>
-                    `h-11 rounded-xl border-2 border-black/15 font-extrabold text-[14px] inline-flex items-center justify-center hover:opacity-80 transition ${
-                      isActive ? "bg-[#B9FF66]/70" : "bg-white"
-                    }`
-                  }
-                >
-                  Login
-                </NavLink>
+              {!isAuthed && (
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <NavLink
+                    to="/login"
+                    className={({ isActive }) =>
+                      `h-11 rounded-xl border-2 border-black/15 font-extrabold text-[14px] inline-flex items-center justify-center hover:opacity-80 transition ${
+                        isActive ? "bg-[#B9FF66]/70" : "bg-white"
+                      }`
+                    }
+                  >
+                    Login
+                  </NavLink>
 
-                <NavLink
-                  to="/sign-up"
-                  className={({ isActive }) =>
-                    `h-11 rounded-xl border-2 border-black/15 font-extrabold text-[14px] inline-flex items-center justify-center hover:opacity-80 transition ${
-                      isActive ? "bg-[#B9FF66]/70" : "bg-white"
-                    }`
-                  }
-                >
-                  Sign-up
-                </NavLink>
-              </div>
+                  <NavLink
+                    to="/sign-up"
+                    className={({ isActive }) =>
+                      `h-11 rounded-xl border-2 border-black/15 font-extrabold text-[14px] inline-flex items-center justify-center hover:opacity-80 transition ${
+                        isActive ? "bg-[#B9FF66]/70" : "bg-white"
+                      }`
+                    }
+                  >
+                    Sign-up
+                  </NavLink>
+                </div>
+              )}
 
               <p className="mt-4 text-center text-[12px] font-semibold text-black/45">
                 CheckIn — building calm, supportive spaces.

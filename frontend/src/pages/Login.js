@@ -1012,6 +1012,86 @@ function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
   return createPortal(content, document.body);
 }
 
+
+      function NoticeModal({ open, message, showSignupHint, onClose, disabled }) {
+        const modalRef = useRef(null);
+
+        useEffect(() => {
+          if (!open) return;
+
+          const onKeyDown = (e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              if (!disabled) onClose();
+            }
+          };
+
+          document.addEventListener("keydown", onKeyDown);
+          requestAnimationFrame(() => modalRef.current?.focus?.());
+
+          return () => document.removeEventListener("keydown", onKeyDown);
+        }, [open, onClose, disabled]);
+
+        if (!open) return null;
+
+        const content = (
+          <div className="fixed inset-0 z-[1200] flex items-center justify-center p-3 sm:p-6">
+            <div
+              className="absolute inset-0 bg-black/45"
+              onClick={() => !disabled && onClose()}
+              aria-hidden="true"
+            />
+
+            <div
+              ref={modalRef}
+              tabIndex={-1}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="notice-title"
+              className="relative w-full max-w-[520px] rounded-[22px] border-4 border-black bg-white shadow-[0_18px_0_rgba(0,0,0,0.18)] overflow-hidden"
+            >
+              <div className="p-5 sm:p-6 border-b border-black/10">
+                <h2 id="notice-title" className="text-[16px] sm:text-[18px] font-extrabold tracking-[0.12em]">
+                  NOTICE
+                </h2>
+                <p className="text-[13px] text-black/60 mt-2">Please read this message.</p>
+              </div>
+
+              <div className="p-5 sm:p-6 text-[13px] sm:text-[14px] leading-relaxed text-black/80">
+                <p className="break-words">{message || "—"}</p>
+
+                {showSignupHint && (
+                  <div className="mt-4">
+                    <Link
+                      to="/sign-up"
+                      className="inline-flex font-extrabold underline underline-offset-4 decoration-black/50 hover:decoration-black/80"
+                      onClick={() => !disabled && onClose()}
+                    >
+                      Go to Sign up with Google →
+                    </Link>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-5 sm:p-6 border-t border-black/10 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={disabled}
+                  className="px-5 py-2 text-[13px] font-extrabold rounded-[12px] border-2 border-black bg-white hover:bg-black/5
+                            focus:outline-none focus-visible:ring-2 focus-visible:ring-black/25 disabled:opacity-60"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+
+        return createPortal(content, document.body);
+      }
+
+
 /* ======================
   HELPERS
 ====================== */
@@ -1052,7 +1132,8 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
-  const [pageError, setPageError] = useState("");
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const [noticeMsg, setNoticeMsg] = useState("");
 
   const [emailOrUsername, setEmailOrUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -1076,10 +1157,26 @@ export default function Login() {
   const [passTouched, setPassTouched] = useState(false);
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
 
+  const [showGoogleSignupHint, setShowGoogleSignupHint] = useState(false);
+
+
   const emailWrapRef = useRef(null);
   const passWrapRef = useRef(null);
 
   const location = useLocation();
+
+  const clearNotice = () => {
+    setNoticeOpen(false);
+    setNoticeMsg("");
+    setShowGoogleSignupHint(false);
+  };
+
+  const showNotice = (msg, opts = {}) => {
+    setNoticeMsg(msg || "");
+    setShowGoogleSignupHint(!!opts.showSignupHint);
+    setNoticeOpen(true);
+  };
+
 
   useEffect(() => {
     const saved = localStorage.getItem("termsAccepted") === "true";
@@ -1129,15 +1226,17 @@ export default function Login() {
     const v = e.target.value;
     setEmailOrUsername(v);
     if (!isBlank(v)) setEmailErr("");
-    if (pageError) setPageError("");
+    if (noticeOpen || showGoogleSignupHint) clearNotice();
   };
+
 
   const onPassChange = (e) => {
     const v = e.target.value;
     setPassword(v);
     if (!isBlank(v)) setPassErr("");
-    if (pageError) setPageError("");
+    if (noticeOpen || showGoogleSignupHint) clearNotice();
   };
+
 
   const inputGlow = ({ focused, invalid }) => {
     if (!focused && !invalid) return "";
@@ -1193,8 +1292,8 @@ export default function Login() {
       if (submitting) return;
 
       setSubmitting(true);
-      setPageError("");
-
+      clearNotice();
+      
       try {
         const res = await fetch("/api/auth/login", {
           method: "POST",
@@ -1210,6 +1309,7 @@ export default function Login() {
 
         // ✅ Remember me handling (local vs session)
         setAuth(data.token, data.user, rememberMe);
+        window.dispatchEvent(new Event("auth:changed"));
 
         redirectByRole(navigate, data.user.role);
       } catch (err) {
@@ -1221,11 +1321,11 @@ export default function Login() {
 
         if (/invalid|incorrect|wrong|credential|401/i.test(msg)) {
           const common = "Invalid username or password";
-          setPageError(common);
+          showNotice(common);
           setEmailErr(common);
           setPassErr(common);
         } else {
-          setPageError(msg);
+          showNotice(msg);
         }
       } finally {
         setSubmitting(false);
@@ -1241,7 +1341,8 @@ export default function Login() {
       if (submitting) return;
 
       setSubmitting(true);
-      setPageError("");
+      clearNotice();
+      setShowGoogleSignupHint(false);
 
       try {
         const firebaseUser = await signInWithGoogle();
@@ -1259,17 +1360,43 @@ export default function Login() {
         });
 
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.message || "Google login failed");
 
-        setAuth(data.token, data.user);
+        // ✅ If backend indicates user isn't registered yet
+        if (!res.ok) {
+          const msg = (data?.message || "").toLowerCase();
+
+          const looksLikeNotRegistered =
+            res.status === 404 ||
+            res.status === 400 ||
+            msg.includes("not found") ||
+            msg.includes("no account") ||
+            msg.includes("not registered") ||
+            msg.includes("signup") ||
+            msg.includes("sign up");
+
+          if (looksLikeNotRegistered) {
+            showNotice(
+              "Looks like this is your first time here. Please sign up with Google to complete your account setup.",
+              { showSignupHint: true }
+            );
+            return;
+          }
+
+          throw new Error(data.message || "Google login failed");
+        }
+
+        setAuth(data.token, data.user, rememberMe);
+        window.dispatchEvent(new Event("auth:changed"));
+        
         redirectByRole(navigate, data.user.role);
       } catch (err) {
-        setPageError(err?.message || "Google login failed");
+        showNotice(err?.message || "Google login failed");
       } finally {
         setSubmitting(false);
       }
     });
   };
+
 
   const uiPatchStyles = `
     .google-btn-wrap { width: 100%; }
@@ -1307,7 +1434,14 @@ export default function Login() {
         setAgreed={setTermsChecked}
         loading={termsLoading}
       />
-
+      <NoticeModal
+        open={noticeOpen}
+        message={noticeMsg}
+        showSignupHint={showGoogleSignupHint}
+        onClose={clearNotice}
+        disabled={submitting}
+      />
+      
       {/* BACKGROUND DOME */}
       <div className="absolute inset-0 z-0">
         <DomeGallery fit={1} autoRotate autoRotateDegPerSec={5} autoRotateIdleDelayMs={1000} disableInteractionMaxWidth={1024} />
@@ -1344,14 +1478,6 @@ export default function Login() {
                   WELCOME
                 </h1>
                 <p className="text-[13px] sm:text-[15px] text-black/80 mt-2">Welcome. Please enter your details.</p>
-
-                <div className="min-h-[52px] mt-5">
-                  <div className={`transition-opacity duration-150 ${pageError ? "opacity-100" : "opacity-0 pointer-events-none"}`} aria-live="polite">
-                    <div className="rounded-[16px] border-2 border-black bg-red-50 px-4 py-3 text-[13px] text-black">
-                      <span className="font-extrabold">Error:</span> {pageError || "—"}
-                    </div>
-                  </div>
-                </div>
 
                 <div className="mt-5 flex flex-col gap-4">
                   <div ref={emailWrapRef}>
@@ -1424,7 +1550,13 @@ export default function Login() {
 
                   <div className="flex items-center justify-between text-[13px]">
                     <label className="flex items-center gap-2">
-                      <input type="checkbox" className="accent-greenBorder" disabled={submitting} />
+                      <input
+                        type="checkbox"
+                        className="accent-greenBorder"
+                        disabled={submitting}
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                      />
                       Remember me
                     </label>
 
@@ -1461,6 +1593,7 @@ export default function Login() {
 
                   <div className="google-btn-wrap">
                     <GoogleButton
+                      label="Login with Google"
                       onClick={(e) => {
                         e?.preventDefault?.();
                         e?.stopPropagation?.();

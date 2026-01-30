@@ -915,6 +915,44 @@ function TermsModal({ open, onClose, onAgree, agreed, setAgreed, loading }) {
   );
 }
 
+function SuccessModal({ open, title = "Success", message, buttonText = "Continue", onClose }) {
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[1100] flex items-center justify-center p-4"
+      style={{
+        paddingTop: "max(12px, env(safe-area-inset-top))",
+        paddingBottom: "max(12px, env(safe-area-inset-bottom))",
+      }}
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+
+      <div className="relative w-full max-w-[520px] rounded-[22px] border-4 border-black bg-white shadow-[0_18px_0_rgba(0,0,0,0.18)] overflow-hidden">
+        <div className="p-5 sm:p-6 border-b border-black/10">
+          <h2 className="text-[18px] sm:text-[20px] font-extrabold tracking-[0.12em] text-black">
+            {title}
+          </h2>
+          <p className="text-[13px] sm:text-[14px] text-black/70 mt-2 leading-relaxed">
+            {message}
+          </p>
+        </div>
+
+        <div className="p-5 sm:p-6 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2 text-[13px] font-extrabold rounded-[12px] border-2 border-black bg-black text-white hover:opacity-90"
+          >
+            {buttonText}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 /* ======================
    COURSE DROPDOWN
 ====================== */
@@ -1113,6 +1151,7 @@ export default function Signup() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   const [form, setForm] = useState({
     firstName: "",
@@ -1125,6 +1164,11 @@ export default function Signup() {
     confirmPassword: "",
   });
 
+  const [successModalOpen, setSuccessModalOpen] = useState(false);
+  const [successModalMsg, setSuccessModalMsg] = useState("");
+  const successRedirectRef = useRef(null);
+
+
   const setField = (key) => (e) => setForm((p) => ({ ...p, [key]: e.target.value }));
 
   const [showTerms, setShowTerms] = useState(false);
@@ -1135,6 +1179,18 @@ export default function Signup() {
   const pendingActionRef = useRef(null);
 
   const errorTimerRef = useRef(null);
+
+  const successTimerRef = useRef(null);
+
+  const showSuccess = (msg) => {
+    if (successTimerRef.current) clearTimeout(successTimerRef.current);
+    setSuccess(msg);
+
+    successTimerRef.current = setTimeout(() => {
+      setSuccess("");
+      successTimerRef.current = null;
+    }, 2500);
+  };
 
     const showError = (msg) => {
     if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
@@ -1149,6 +1205,7 @@ export default function Signup() {
     useEffect(() => {
     return () => {
       if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+      if (successTimerRef.current) clearTimeout(successTimerRef.current);
     };
   }, []);
 
@@ -1212,10 +1269,13 @@ export default function Signup() {
   };
 
 const handleGoogleSignup = async () => {
+  if (loading) return;
+
   await requireTermsThen(async () => {
     setLoading(true);
     if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
     setError("");
+    setSuccess(""); // keep if you have success state; harmless
 
     try {
       const course = (form.course || "").trim();
@@ -1228,14 +1288,17 @@ const handleGoogleSignup = async () => {
       if (!studentNumberRegex.test(studentNumber)) throw new Error("Invalid, please try again.");
 
       const firebaseUser = await signInWithGoogle();
+
+      // ✅ normalize firebase return
       const u = firebaseUser?.user || firebaseUser;
 
       const payload = {
         googleId: u?.uid,
         email: u?.email,
-        fullName: u?.displayName || u?.email?.split("@")?.[0],
+        fullName: u?.displayName || u?.email?.split("@")?.[0] || "Google User",
         course,
         studentNumber,
+        mode: "register",
       };
 
       const { res, data, raw } = await fetchJsonSafe("/api/auth/google", {
@@ -1245,12 +1308,14 @@ const handleGoogleSignup = async () => {
       });
 
       if (!res.ok) {
-        const serverMsg = (data?.message || raw || "Google sign in failed.").toString();
+        const serverMsg = (data?.message || raw || "Google sign up failed.").toString();
         const m = serverMsg.toLowerCase();
 
-        if (m.includes("email") && (m.includes("exist") || m.includes("taken") || m.includes("already"))) {
-          throw new Error("Email is taken.");
+        // ✅ nicer UX for "already exists"
+        if (res.status === 409 || (m.includes("email") && (m.includes("exist") || m.includes("already") || m.includes("taken")))) {
+          throw new Error("Account already exists. Please log in.");
         }
+
         if (m.includes("username") && (m.includes("exist") || m.includes("taken") || m.includes("already"))) {
           throw new Error("Username is taken.");
         }
@@ -1258,19 +1323,28 @@ const handleGoogleSignup = async () => {
         throw new Error(serverMsg);
       }
 
-      // ✅ login behavior: store token + go to app (NOT /login)
-      if (data?.token) localStorage.setItem("token", data.token);
-      if (data?.user) localStorage.setItem("user", JSON.stringify(data.user));
+      // ✅ SUCCESS: show modal FIRST, then redirect on close
+      const msg = "Account successfully created. Please log in.";
 
-      navigate("/"); // change this to your dashboard route e.g. "/dashboard"
+      setSuccessModalMsg(msg);
+
+      successRedirectRef.current = () => {
+        navigate("/login", {
+          state: {
+            noticeType: "success",
+            noticeMessage: msg,
+          },
+        });
+      };
+
+      setSuccessModalOpen(true);
     } catch (err) {
-      showError(err.message || "Google sign in failed");
+      showError(err?.message || "Google sign up failed");
     } finally {
       setLoading(false);
     }
   });
 };
-
 
 
 const handleCreateAccount = async (e) => {
@@ -1397,6 +1471,22 @@ const handleCreateAccount = async (e) => {
         setAgreed={setTermsChecked}
         loading={termsLoading}
       />
+      <SuccessModal
+        open={successModalOpen}
+        title="Account created"
+        message={successModalMsg}
+        buttonText="Go to Login"
+        onClose={() => {
+          setSuccessModalOpen(false);
+
+          // ✅ redirect only after user acknowledges
+          if (typeof successRedirectRef.current === "function") {
+            const go = successRedirectRef.current;
+            successRedirectRef.current = null;
+            go();
+          }
+        }}
+      />
 
       {/* BACKGROUND DOME */}
       <div className="absolute inset-0 z-0">
@@ -1450,6 +1540,12 @@ const handleCreateAccount = async (e) => {
                 </div>
               )}
 
+              {success && (
+                <div className="mt-5 rounded-[16px] border-2 border-black bg-green-50 px-4 py-3 text-[13px]">
+                  <b>Success:</b> {success}
+                </div>
+              )}
+
               <form className="mt-6 flex flex-col gap-4" onSubmit={handleCreateAccount}>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <TextInput label="First Name" value={form.firstName} onChange={setField("firstName")} />
@@ -1474,16 +1570,17 @@ const handleCreateAccount = async (e) => {
                 </div>
               </form>
 
-              <div className="google-btn-wrap mt-3">
-                <GoogleButton
-                  onClick={(e) => {
-                    e?.preventDefault?.();
-                    e?.stopPropagation?.();
-                    handleGoogleSignup();
-                  }}
-                  loading={loading}
-                />
-              </div>
+                <div className="google-btn-wrap mt-3">
+                  <GoogleButton
+                    label="Sign up with Google"
+                    onClick={(e) => {
+                      e?.preventDefault?.();
+                      e?.stopPropagation?.();
+                      handleGoogleSignup();
+                    }}
+                    loading={loading}
+                  />
+                </div>
 
               <p className="text-[13px] text-black/80 mt-4">
                 Already have an account?{" "}
