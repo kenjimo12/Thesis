@@ -54,7 +54,6 @@ export default function AppRoutes() {
         {/* =======================
             PROTECTED (TOKEN REQUIRED)
            ======================= */}
-        <Route element={<ProtectedRoute />}>
           <Route element={<MainLayout />}>
             {/* ✅ Restricted: Guidance Counseling */}
             <Route path="/services/counseling" element={<GuidanceCounseling />} />
@@ -71,7 +70,6 @@ export default function AppRoutes() {
             {/* ✅ Restricted: Counselor dashboard (keep protected if you want) */}
             <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
           </Route>
-        </Route>
       </Routes>
     </>
   );
