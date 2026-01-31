@@ -11,6 +11,7 @@
  * - Student Accounts (delete/retrieve - static)
  */
 
+
 const INBOX_KEY = "checkin:counselor_inbox_items";
 const ACTIVITY_KEY = "checkin:counselor_activity_log";
 const STUDENTS_KEY = "checkin:student_accounts";
@@ -231,6 +232,7 @@ function loadActivity() {
   saveActivity(seeded);
   return seeded;
 }
+
 
 /* ===================== STUDENT ACCOUNTS (STATIC) ===================== */
 function saveStudents(list) {

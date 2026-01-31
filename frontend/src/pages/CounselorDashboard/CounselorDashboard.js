@@ -388,19 +388,21 @@ export default function CounselorDashboard() {
             </div>
           </header>
 
-          {/* Summary Cards (hide when on Logout) */}
-          {activeTab !== "logout" ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
-              <StatCard label="Pending Questions" value={stats.pendingAsk} />
-              <StatCard label="Meet Requests" value={stats.pendingMeet} />
-              <StatCard label="Today's Sessions" value={stats.todaysSessions} />
-              <StatCard
-                label="Open Incidents"
-                value={stats.openIncidents}
-                highlight
-              />
-            </div>
-          ) : null}
+ {/* Summary Cards (hide on Logout + Account Settings + Student Accounts) */}
+{activeTab !== "logout" &&
+activeTab !== "settings" &&
+activeTab !== "students" ? (
+  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
+    <StatCard label="Pending Questions" value={stats.pendingAsk} />
+    <StatCard label="Meet Requests" value={stats.pendingMeet} />
+    <StatCard label="Today's Sessions" value={stats.todaysSessions} />
+    <StatCard
+      label="Open Incidents"
+      value={stats.openIncidents}
+      highlight
+    />
+  </div>
+) : null}
 
           {/* Main section */}
           <main className="min-w-0">{renderActiveSection()}</main>
