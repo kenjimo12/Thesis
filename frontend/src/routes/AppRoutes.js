@@ -58,19 +58,9 @@ export default function AppRoutes() {
           <Route path="/forgotpassword" element={<ForgotPassword />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
 
-          {/* ✅ Public pages */}
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/about-us" element={<AboutUs />} />
-          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
-          <Route path="/services/emergency" element={<Emergency />} />
-        </Route>
-
-        {/* =======================
-            PROTECTED (TOKEN REQUIRED)
-           ======================= */}
-        <Route element={<ProtectedRoute />}>
-          <Route element={<MainLayout />}>
-            {/* ✅ Restricted: Guidance Counseling */}
+          {/* TEMP: These were protected before, now open because ProtectedRoute allows all */}
+          <Route element={<ProtectedRoute />}>
+            {/* Guidance Counseling */}
             <Route path="/services/counseling" element={<GuidanceCounseling />} />
             <Route path="/services/counseling/request" element={<Request />} />
             <Route path="/services/counseling/requests" element={<ViewRequest />} />
@@ -81,9 +71,6 @@ export default function AppRoutes() {
 
             {/* Student */}
             <Route path="/profile-settings" element={<ProfileSettings />} />
-
-            {/* ✅ Restricted: Counselor dashboard (keep protected if you want) */}
-            <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
           </Route>
         </Route>
       </Routes>
