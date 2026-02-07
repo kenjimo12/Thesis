@@ -283,8 +283,10 @@ export default function CounselorDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-[Nunito]">
-      <div className="sm:hidden sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200">
+    // ✅ KEY FIX: make the root a flex column so mobile header consumes height,
+    // and the content gets the remaining space (no clipping at bottom).
+    <div className="h-dvh overflow-hidden bg-slate-50 text-slate-900 font-[Nunito] flex flex-col">
+      <div className="sm:hidden sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200 shrink-0">
         <div className="flex items-center gap-3 px-4 py-3">
           <button
             type="button"
@@ -317,7 +319,7 @@ export default function CounselorDashboard() {
         className={[
           "fixed top-0 left-0 z-50 h-full bg-white border-r border-slate-200",
           "transition-[transform,width] duration-200",
-          // Mobile sizing: avoids awkward right-side strip on small screens
+          // Mobile sizing
           "w-[85vw] max-w-[20rem]",
           // Desktop sizing
           sidebarCollapsed ? "sm:w-20" : "sm:w-72",
@@ -432,10 +434,7 @@ export default function CounselorDashboard() {
                       </span>
 
                       {!sidebarCollapsed && active ? (
-                        <span
-                          className="w-2 h-2 rounded-full"
-                          style={{ background: BRAND }}
-                        />
+                        <span className="w-2 h-2 rounded-full" style={{ background: BRAND }} />
                       ) : null}
                     </button>
 
@@ -448,22 +447,21 @@ export default function CounselorDashboard() {
         </div>
       </aside>
 
+      {/* ✅ KEY FIX: remove h-dvh here; let it be flex-1 so mobile header height is respected */}
       <div
         className={[
-          "transition-[margin] duration-200",
+          "flex-1 min-h-0 overflow-hidden transition-[margin] duration-200",
           sidebarCollapsed ? "sm:ml-20" : "sm:ml-72",
         ].join(" ")}
       >
-        <div className="p-4 sm:p-6 lg:p-8">
-          <header className="hidden sm:block mb-5">
+        <div className="h-full min-h-0 p-4 sm:p-6 lg:p-8 flex flex-col">
+          <header className="hidden sm:block mb-5 shrink-0">
             <div className="flex items-end justify-between gap-4 flex-wrap">
               <div>
                 <h1 className="text-2xl lg:text-3xl font-black tracking-tight">
-                  Counselor Dashboards
+                  Counselor Dashboard
                 </h1>
-                <p className="mt-1 text-sm font-bold text-slate-500">
-                  {activeLabel}
-                </p>
+                <p className="mt-1 text-sm font-bold text-slate-500">{activeLabel}</p>
               </div>
 
               <div
@@ -475,7 +473,9 @@ export default function CounselorDashboard() {
             </div>
           </header>
 
-          <main className="min-w-0">{renderActiveSection()}</main>
+          <main className="min-w-0 flex-1 min-h-0 overflow-hidden">
+            {renderActiveSection()}
+          </main>
         </div>
       </div>
     </div>

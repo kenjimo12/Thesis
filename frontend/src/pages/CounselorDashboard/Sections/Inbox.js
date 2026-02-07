@@ -340,6 +340,7 @@ function AnimatedInboxList({
   enableArrowNavigation = true,
   displayScrollbar = true,
   className = "",
+  containerStyle = {},
 }) {
   const listRef = useRef(null);
 
@@ -430,20 +431,23 @@ function AnimatedInboxList({
 
   return (
     <div className={`relative ${className}`}>
-      <div
-        ref={listRef}
-        className={[
-          "h-[78vh] overflow-y-auto",
-          displayScrollbar
-            ? "[&::-webkit-scrollbar]:w-[8px] [&::-webkit-scrollbar-track]:bg-white [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-[10px]"
-            : "scrollbar-hide",
-        ].join(" ")}
-        onScroll={handleScroll}
-        style={{
-          scrollbarWidth: displayScrollbar ? "thin" : "none",
-          scrollbarColor: displayScrollbar ? "#e2e8f0 #ffffff" : undefined,
-        }}
-      >
+        <div
+          ref={listRef}
+          className={[
+            "h-full min-h-0 overflow-y-auto",
+            displayScrollbar
+              ? "[&::-webkit-scrollbar]:w-[8px] [&::-webkit-scrollbar-track]:bg-white [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-[10px]"
+              : "scrollbar-hide",
+          ].join(" ")}
+          onScroll={handleScroll}
+          style={{
+            WebkitOverflowScrolling: "touch",
+            overscrollBehavior: "contain",
+            scrollbarWidth: displayScrollbar ? "thin" : "none",
+            scrollbarColor: displayScrollbar ? "#e2e8f0 #ffffff" : undefined,
+            ...containerStyle,
+          }}
+        >
         <div className="divide-y divide-slate-100">
           {items.map((x, index) => {
             const active = x.id === selectedId;
@@ -743,6 +747,8 @@ function AnimatedRow({ children, index, delay = 0.02 }) {
 /* -----------------------------
    Conversation Pane (reused)
 ----------------------------- */
+
+
 function ConversationPane({
   selected,
   tab,
@@ -759,71 +765,74 @@ function ConversationPane({
   isMobileAnimated,
 }) {
   const reduceMotion = useReducedMotion();
-  const swipeThreshold = 90;
+
+  // ✅ ADD THESE TWO LINES RIGHT HERE
+  const start = useRef({ x: 0, y: 0, t: 0 });
+  const swiping = useRef(false);
 
   const pane = (
     <>
       {/* Header */}
-      <div className="px-4 py-3 border-b border-slate-200 bg-white space-y-3">
+      <div className="shrink-0 sticky top-0 z-30 px-4 py-3 border-b border-slate-200 bg-white space-y-3">
+
         {/* Row 1 */}
-{/* Row 1 */}
-<div className="flex items-center justify-between gap-3">
-  {/* Left: avatar + labels */}
-  <div className="flex items-center gap-3 min-w-0">
-    {selected ? <Avatar label={selected.displayName} /> : <Avatar label="—" />}
+        <div className="flex items-center justify-between gap-3">
+          {/* Left: avatar + labels */}
+          <div className="flex items-center gap-3 min-w-0">
+            {selected ? <Avatar label={selected.displayName} /> : <Avatar label="—" />}
 
-    <div className="min-w-0">
-      <div className="text-sm font-black text-slate-900 truncate">
-        {selected?.displayName || "Select a conversation"}
-      </div>
-      <div className="text-[12px] font-bold text-slate-500 truncate">
-        {selected ? (
-          <>
-            {selected.topic}
-            {selected.anonymous ? " • Anonymous Participant" : ""}
-          </>
-        ) : (
-          "Choose a student from the list"
-        )}
-      </div>
-    </div>
-  </div>
+            <div className="min-w-0">
+              <div className="text-sm font-black text-slate-900 truncate">
+                {selected?.displayName || "Select a conversation"}
+              </div>
+              <div className="text-[12px] font-bold text-slate-500 truncate">
+                {selected ? (
+                  <>
+                    {selected.topic}
+                    {selected.anonymous ? " • Anonymous Participant" : ""}
+                  </>
+                ) : (
+                  "Choose a student from the list"
+                )}
+              </div>
+            </div>
+          </div>
 
-  {/* Right: Mobile back OR Desktop close */}
-  <div className="flex items-center gap-2 shrink-0">
-    {showBack ? (
-      <button
-        onClick={onBack}
-        className={[
-          "h-10 w-10 grid place-items-center",
-          "rounded-[10px] border border-slate-200 bg-white text-slate-700",
-          "hover:bg-slate-50 transition shrink-0",
-          "focus:outline-none focus:ring-4 focus:ring-slate-100",
-        ].join(" ")}
-        type="button"
-        aria-label="Back"
-        title="Back"
-      >
-        <IconBack className="w-5 h-5" />
-      </button>
-    ) : (
-      <button
-        onClick={onBack}
-        className={[
-          "h-10 px-3 inline-flex items-center gap-2",
-          "rounded-[10px] border border-slate-200 bg-white text-slate-700",
-          "hover:bg-slate-50 transition",
-          "focus:outline-none focus:ring-4 focus:ring-slate-100",
-        ].join(" ")}
-        type="button"
-        aria-label="Close conversation"
-        title="Close conversation"
-      >
-        <span className="text-sm font-extrabold">Close</span>
-      </button>
-    )}
-  </div>
-</div>
+          {/* Right: Mobile back OR Desktop close */}
+          <div className="flex items-center gap-2 shrink-0">
+            {showBack ? (
+              <button
+                onClick={onBack}
+                className={[
+                  "h-10 w-10 grid place-items-center",
+                  "rounded-[10px] border border-slate-200 bg-white text-slate-700",
+                  "hover:bg-slate-50 transition shrink-0",
+                  "focus:outline-none focus:ring-4 focus:ring-slate-100",
+                ].join(" ")}
+                type="button"
+                aria-label="Back"
+                title="Back"
+              >
+                <IconBack className="w-5 h-5" />
+              </button>
+            ) : (
+              <button
+                onClick={onBack}
+                className={[
+                  "h-10 px-3 inline-flex items-center gap-2",
+                  "rounded-[10px] border border-slate-200 bg-white text-slate-700",
+                  "hover:bg-slate-50 transition",
+                  "focus:outline-none focus:ring-4 focus:ring-slate-100",
+                ].join(" ")}
+                type="button"
+                aria-label="Close conversation"
+                title="Close conversation"
+              >
+                <span className="text-sm font-extrabold">Close</span>
+              </button>
+            )}
+          </div>
+        </div>
 
 
         <LayoutGroup id="segmented-tabs">
@@ -890,24 +899,37 @@ function ConversationPane({
       </div>
 
       {!selected ? (
-        <div className="px-4 py-8 text-sm font-semibold text-slate-500">Pick a student from the left.</div>
+        <div className="flex-1 min-h-0 px-4 py-8 text-sm font-semibold text-slate-500">
+          Pick a student from the left.
+        </div>
       ) : (
+
         <>
           {tab === "chat" ? (
-            <div className="h-[78vh] flex flex-col">
-              <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto bg-slate-50 px-4 py-4 space-y-3">
+            <div className="flex-1 min-h-0 flex flex-col">
+              <div
+                ref={chatScrollRef}
+                className="flex-1 min-h-0 overflow-y-auto bg-slate-50 px-4 py-4 space-y-3"
+                style={{
+                  WebkitOverflowScrolling: "touch",
+                  overscrollBehavior: "contain",
+                  touchAction: "pan-y",
+                }}
+              >
                 <div className="flex justify-center">
                   <span className="text-[11px] font-bold text-slate-400 bg-white border border-slate-200 px-3 py-1 rounded-full shadow-[0_1px_0_rgba(0,0,0,0.03)]">
                     {selected.read ? "Seen" : "Delivered"} • {selected.lastSeen}
                   </span>
                 </div>
 
-              {safeArray(selected.thread).map((m) => (
-                <ChatBubble key={m.id} by={m.by} text={m.text} />
-              ))}
+                {safeArray(selected.thread).map((m) => (
+                  <ChatBubble key={m.id} by={m.by} text={m.text} />
+                ))}
               </div>
 
-              <div className="border-t border-slate-200 bg-white px-4 py-3">
+              {/* ✅ never let the composer disappear */}
+              <div className="shrink-0 sticky bottom-2 z-20 border-t border-slate-200 bg-white px-4 py-3 pb-[calc(env(safe-area-inset-bottom)+24px)]">
+
                 <div className="flex items-end gap-2">
                   <textarea
                     value={draft}
@@ -924,19 +946,22 @@ function ConversationPane({
                   />
                   <button
                     onClick={send}
-                    className="px-4 py-3 rounded-[10px] text-sm font-extrabold bg-slate-900 text-white hover:bg-slate-800 shadow-sm"
+                    className="shrink-0 px-4 py-3 rounded-[10px] text-sm font-extrabold bg-slate-900 text-white hover:bg-slate-800 shadow-sm"
                     type="button"
                   >
                     Send
                   </button>
                 </div>
-                <div className="mt-1 text-[11px] font-bold text-slate-400">Enter = send • Shift+Enter = new line</div>
+                <div className="mt-1 text-[11px] font-bold text-slate-400">
+                  Enter = send • Shift+Enter = new line
+                </div>
               </div>
             </div>
+
           ) : null}
 
           {tab === "mood" ? (
-            <div className="h-[78vh] overflow-y-auto bg-slate-50 p-4">
+            <div className="h-full min-h-0 overflow-y-auto bg-slate-50 p-4">
               {selected.anonymous ? (
                 <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_1px_0_rgba(0,0,0,0.03)]">
                   <div className="text-sm font-black text-slate-900">Mood Tracker locked</div>
@@ -955,28 +980,60 @@ function ConversationPane({
   );
 
   if (!isMobileAnimated) {
-    return <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">{pane}</section>;
+    return (
+      <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden flex flex-col flex-1 min-h-0">
+        {pane}
+      </section>
+    );
   }
+
 
   return (
     <motion.section
-      className="rounded-2xl border border-slate-200 bg-white overflow-hidden"
+      className="rounded-2xl border border-slate-200 bg-white overflow-hidden flex flex-col flex-1 min-h-0"
       initial={reduceMotion ? false : { x: 40, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={reduceMotion ? { opacity: 0 } : { x: 60, opacity: 0 }}
       transition={{ duration: reduceMotion ? 0 : 0.18, ease: "easeOut" }}
-      drag="x"
-      dragConstraints={{ left: 0, right: 0 }}
-      dragElastic={0.2}
-      onDragEnd={(_, info) => {
-        const goBack = info.offset.x > swipeThreshold || (info.velocity.x > 900 && info.offset.x > 30);
-        if (goBack) onBack?.();
+      onPointerDown={(e) => {
+        // only left-click / touch
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+        start.current = { x: e.clientX, y: e.clientY, t: Date.now() };
+        swiping.current = true;
+      }}
+      onPointerMove={(e) => {
+        if (!swiping.current) return;
+
+        const dx = e.clientX - start.current.x;
+        const dy = e.clientY - start.current.y;
+
+        // if user is clearly scrolling vertically, stop treating as swipe
+        if (Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(dx)) {
+          swiping.current = false;
+        }
+      }}
+      onPointerUp={(e) => {
+        if (!swiping.current) return;
+        swiping.current = false;
+
+        const dx = e.clientX - start.current.x;
+        const dy = e.clientY - start.current.y;
+        const dt = Date.now() - start.current.t;
+
+        // ✅ swipe-right back: horizontal strong, vertical small, quick enough
+        const ok =
+          dx > 90 &&
+          Math.abs(dy) < 40 &&
+          dt < 650;
+
+        if (ok) onBack?.();
       }}
       style={{ touchAction: "pan-y" }}
     >
       {pane}
     </motion.section>
   );
+
 }
 
 function IconBack({ className = "" }) {
@@ -1137,7 +1194,8 @@ export default function Inbox() {
 
 
   const InboxList = (
-    <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+    <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden flex flex-col h-full min-h-0">
+
       <div className="px-4 py-3 border-b border-slate-200 bg-white space-y-2">
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-black text-slate-900">Student List</div>
@@ -1162,30 +1220,39 @@ export default function Inbox() {
       </div>
 
       {/* ✅ Template-style animated scroll list */}
-      {list.length === 0 ? (
-        <div className="px-4 py-6 text-sm font-semibold text-slate-500">No results.</div>
-      ) : (
-        <AnimatedInboxList
-          items={list}
-          selectedId={selectedId}
-          onItemSelect={(item) => selectChat(item.id)}
-          showGradients
-          enableArrowNavigation
-          displayScrollbar
-        />
-      )}
+      <div className="flex-1 min-h-0">
+        {list.length === 0 ? (
+          <div className="px-4 py-6 text-sm font-semibold text-slate-500">No results.</div>
+        ) : (
+          <AnimatedInboxList
+            items={list}
+            selectedId={selectedId}
+            onItemSelect={(item) => selectChat(item.id)}
+            showGradients
+            enableArrowNavigation
+            displayScrollbar
+            className="h-full min-h-0"
+            containerStyle={{}}
+          />
+        )}
+      </div>
+
     </section>
   );
 
   return (
-    <div style={{ fontFamily: 'Nunito, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial' }}>
+    <div
+      className="h-full min-h-0 min-w-0"
+      style={{ fontFamily: 'Nunito, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial' }}
+    >
       {/* MOBILE: either list OR conversation */}
-      <div className="lg:hidden">
-        <div className="grid grid-cols-1 gap-4">
+    <div className="lg:hidden h-full min-h-0 flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col">
           <AnimatePresence mode="wait" initial={false}>
             {!showConversation ? (
               <motion.div
                 key="list"
+                className="flex-1 min-h-0 flex flex-col"  // ✅ important
                 initial={{ x: 0, opacity: 1 }}
                 animate={{ x: 0, opacity: 1 }}
                 exit={{ x: -40, opacity: 0 }}
@@ -1194,30 +1261,32 @@ export default function Inbox() {
                 {InboxList}
               </motion.div>
             ) : (
-              <ConversationPane
-                key="conversation"
-                selected={selected}
-                tab={tab}
-                setTab={setTab}
-                moodDisabled={moodDisabled}
-                day={day}
-                setDay={setDay}
-                draft={draft}
-                setDraft={setDraft}
-                send={send}
-                chatScrollRef={chatScrollRef}
-                showBack
-                onBack={() => setShowConversation(false)}
-                isMobileAnimated
-              />
+              <motion.div key="conversation" className="flex-1 min-h-0 flex flex-col">
+                <ConversationPane
+                  selected={selected}
+                  tab={tab}
+                  setTab={setTab}
+                  moodDisabled={moodDisabled}
+                  day={day}
+                  setDay={setDay}
+                  draft={draft}
+                  setDraft={setDraft}
+                  send={send}
+                  chatScrollRef={chatScrollRef}
+                  showBack
+                  onBack={() => setShowConversation(false)}
+                  isMobileAnimated
+                />
+              </motion.div>
             )}
           </AnimatePresence>
         </div>
       </div>
 
+
       {/* DESKTOP (lg+): keep original two-column layout */}
-      <div className="hidden lg:block">
-        <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4">
+      <div className="hidden lg:block h-full min-h-0">
+        <div className="h-full min-h-0 grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4">
           {InboxList}
 
           {desktopPaneOpen ? (
@@ -1238,7 +1307,7 @@ export default function Inbox() {
             />
           ) : (
             <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-              <div className="h-[78vh] flex items-center justify-center bg-slate-50 px-6">
+              <div className="h-full min-h-0 flex items-center justify-center bg-slate-50 px-6">
                 <div className="text-center max-w-[420px]">
                   <div className="mx-auto w-[220px] sm:w-[260px]">
                     <Lottie

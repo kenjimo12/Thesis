@@ -936,7 +936,7 @@ function PillTab({ tabKey, active, onClick, label, count }) {
 }
 
 function PaginationBar({ page, totalPages, onPage }) {
-  if (totalPages <= 1) return null;
+  if (totalPages < 1) return null;
 
   const go = (p) => onPage(Math.min(totalPages, Math.max(1, p)));
 
@@ -1180,7 +1180,7 @@ useEffect(() => {
     setPage(1);
   }, [tab, q, sortBy]);
 
-  const pageSize = 3;
+  const pageSize = 2;
   const [page, setPage] = useState(1);
 
   const total = filteredSorted.length;
@@ -1382,10 +1382,11 @@ syncCalendarSelectedDate(nextDate); // ✅ Calendar auto-select new date
 
 
   return (
-    <div className="space-y-4">
+    <div className="h-full min-h-0 flex flex-col space-y-4">
       <Notice tone={notice.tone} message={notice.message} onClose={() => setNotice({ tone: "slate", message: "" })} />
 
-      <section className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+      <section className="rounded-3xl border border-slate-200 bg-white shadow-sm flex flex-col">
+
         <div className="p-5 sm:p-6">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
@@ -1452,7 +1453,7 @@ syncCalendarSelectedDate(nextDate); // ✅ Calendar auto-select new date
         </div>
       </section>
 
-      <section className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+      <section className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm flex flex-col min-h-0">
         <div className="px-5 sm:px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap">
           <div className="text-sm font-black text-slate-800">Requests</div>
           <div className="text-xs font-bold text-slate-500">Click an item to manage it.</div>
@@ -1778,16 +1779,13 @@ syncCalendarSelectedDate(nextDate); // ✅ Calendar auto-select new date
       </ModalShell>
 
       <style>{`
-     .meet-scroll{
-  max-height: calc(100dvh - 260px);
-  overflow-y: auto;
-  overflow-x: hidden;   /* ✅ prevent horizontal scrollbar on pagination animation */
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-}
-
-        @media (max-width: 640px){
-          .meet-scroll{ max-height: calc(100dvh - 210px); }
+        .meet-scroll{
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          overflow-x: hidden;
+          overscroll-behavior: contain;
+          -webkit-overflow-scrolling: touch;
         }
 
         .meet-list-pad{ padding-bottom: 84px; }
