@@ -1,1081 +1,699 @@
 // src/pages/CounselorDashboard/Sections/Inbox.jsx
-import { useMemo, useState, useEffect } from "react";
-import {
-  getAskInboxItems,
-  counselorReplyToAsk,
-  requestUnmaskIdentity,
-  // ✅ add this to counselor.api (sample backend contract below)
-  counselorSetThreadStatus,
-} from "../counselor.api";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import PHQ9Card from "../Components/PHQ9Card";
+/**
+ * Messenger-like UI + Mood Tracker (enhanced)
+ * - UI-only (NO backend)
+ * - Anonymous participants: Mood Tracker is locked (cannot view)
+ * - Coping: single value only
+ */
 
-/* -------------------------------------------------------
-   Status definitions
-------------------------------------------------------- */
-const STATUS = {
-  NEW: {
-    label: "NEW",
-    desc: "Created by student; not yet reviewed.",
-    studentVisible: true,
-  },
-  UNDER_REVIEW: {
-    label: "UNDER_REVIEW",
-    desc: "Counselor/intake is reviewing the concern.",
-    studentVisible: true,
-  },
-  APPOINTMENT_REQUIRED: {
-    label: "APPOINTMENT_REQUIRED",
-    desc: "Counselor requires a session; student must schedule/confirm.",
-    studentVisible: true,
-  },
-  SCHEDULED: {
-    label: "SCHEDULED",
-    desc: "Appointment scheduled and confirmed.",
-    studentVisible: true,
-  },
-  IN_SESSION: {
-    label: "IN_SESSION",
-    desc: "Counseling is actively ongoing.",
-    studentVisible: true,
-  },
-  WAITING_ON_STUDENT: {
-    label: "WAITING_ON_STUDENT",
-    desc: "Counselor requested info/action from student.",
-    studentVisible: true,
-  },
-  FOLLOW_UP_REQUIRED: {
-    label: "FOLLOW_UP_REQUIRED",
-    desc: "Session done but follow-up/monitoring recommended.",
-    studentVisible: true,
-  },
-  COMPLETED: {
-    label: "COMPLETED",
-    desc: "Concern addressed; no further action required.",
-    studentVisible: true,
-  },
-  CLOSED: {
-    label: "CLOSED",
-    desc: "Thread archived; student can open a new one. (Read-only to student)",
-    studentVisible: true,
-  },
-
-  // Optional internal statuses (restricted)
-  URGENT: {
-    label: "URGENT",
-    desc: "High priority; requires immediate attention.",
-    studentVisible: false,
-    internal: true,
-  },
-  CRISIS: {
-    label: "CRISIS",
-    desc: "Potential safety/mental health crisis; follow emergency protocols.",
-    studentVisible: false,
-    internal: true,
-  },
-};
-
-const COUNSELOR_VISIBLE_STATUSES = [
-  "NEW",
-  "UNDER_REVIEW",
-  "APPOINTMENT_REQUIRED",
-  "SCHEDULED",
-  "IN_SESSION",
-  "WAITING_ON_STUDENT",
-  "FOLLOW_UP_REQUIRED",
-  "COMPLETED",
-  "CLOSED",
-  // include internal if you want counselors to set them:
-  "URGENT",
-  "CRISIS",
+/* -----------------------------
+   Fixed vocab
+----------------------------- */
+const MOODS = ["Happy", "Calm", "Okay", "Stressed", "Sad", "Angry", "Fear", "Surprise", "Disgust"];
+const REASONS = ["School", "Family", "Friends", "Health", "Other"];
+const COPING_OPTIONS = [
+  "Deep breathing",
+  "Walk / exercise",
+  "Talk to friend",
+  "Music",
+  "Journaling",
+  "Meditation",
+  "Prayer",
+  "Sleep / rest",
+  "Grounding (5-4-3-2-1)",
+  "Counselor session",
 ];
 
-/* -------------------------------------------------------
+/* -----------------------------
    Helpers
-------------------------------------------------------- */
+----------------------------- */
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
 function ymd(date) {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(
-    date.getDate()
-  )}`;
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
-function buildMonthGrid(year, monthIndex) {
-  const first = new Date(year, monthIndex, 1);
-  const startDay = first.getDay(); // 0=Sun
-  const start = new Date(year, monthIndex, 1 - startDay);
+function safeArray(v) {
+  return Array.isArray(v) ? v : [];
+}
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+function mulberry32(seed) {
+  let t = seed >>> 0;
+  return function rand() {
+    t += 0x6d2b79f5;
+    let x = Math.imul(t ^ (t >>> 15), 1 | t);
+    x ^= x + Math.imul(x ^ (x >>> 7), 61 | x);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function pick(arr, idx) {
+  return arr[idx % arr.length];
+}
 
-  const days = [];
-  for (let i = 0; i < 42; i++) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-    days.push(d);
+/**
+ * Mood score mapping for regression
+ * Higher = better
+ */
+const MOOD_SCORE = {
+  Happy: 9,
+  Calm: 8,
+  Okay: 6,
+  Surprise: 6,
+  Stressed: 4,
+  Fear: 3,
+  Sad: 2,
+  Disgust: 2,
+  Angry: 1,
+};
+
+function linearRegressionSlope(values) {
+  const pts = safeArray(values)
+    .map((y, i) => ({ x: i + 1, y }))
+    .filter((p) => typeof p.y === "number" && Number.isFinite(p.y));
+  if (pts.length < 3) return null;
+
+  const n = pts.length;
+  const sumX = pts.reduce((a, p) => a + p.x, 0);
+  const sumY = pts.reduce((a, p) => a + p.y, 0);
+  const sumXY = pts.reduce((a, p) => a + p.x * p.y, 0);
+  const sumXX = pts.reduce((a, p) => a + p.x * p.x, 0);
+
+  const denom = n * sumXX - sumX * sumX;
+  if (denom === 0) return null;
+
+  return (n * sumXY - sumX * sumY) / denom;
+}
+
+function avg(values) {
+  const pts = safeArray(values).filter((v) => typeof v === "number" && Number.isFinite(v));
+  if (!pts.length) return null;
+  return pts.reduce((a, b) => a + b, 0) / pts.length;
+}
+
+function trendMeta(slope) {
+  if (slope == null) return { label: "No trend", arrow: "—", badge: "bg-slate-50 text-slate-700 border-slate-200" };
+  if (slope > 0.12) return { label: "Improving", arrow: "↗", badge: "bg-emerald-50 text-emerald-800 border-emerald-200" };
+  if (slope < -0.12) return { label: "Declining", arrow: "↘", badge: "bg-rose-50 text-rose-800 border-rose-200" };
+  return { label: "Stable", arrow: "→", badge: "bg-amber-50 text-amber-900 border-amber-200" };
+}
+
+function Sparkline({ values }) {
+  const pts = safeArray(values).filter((v) => typeof v === "number" && Number.isFinite(v));
+  if (pts.length < 2) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-500">
+        Not enough data
+      </div>
+    );
   }
-  return days;
-}
 
-function badgeClassForStatus(status) {
-  // You can tweak colors
-  if (status === "CRISIS") return "bg-red-600 text-white border-red-600";
-  if (status === "URGENT") return "bg-red-50 text-red-800 border-red-200";
-  if (status === "NEW") return "bg-slate-50 text-slate-800 border-slate-200";
-  if (status === "UNDER_REVIEW")
-    return "bg-blue-50 text-blue-800 border-blue-200";
-  if (status === "WAITING_ON_STUDENT")
-    return "bg-amber-50 text-amber-900 border-amber-200";
-  if (status === "APPOINTMENT_REQUIRED")
-    return "bg-purple-50 text-purple-800 border-purple-200";
-  if (status === "SCHEDULED") return "bg-indigo-50 text-indigo-800 border-indigo-200";
-  if (status === "IN_SESSION") return "bg-emerald-50 text-emerald-800 border-emerald-200";
-  if (status === "FOLLOW_UP_REQUIRED")
-    return "bg-teal-50 text-teal-800 border-teal-200";
-  if (status === "COMPLETED") return "bg-emerald-600 text-white border-emerald-600";
-  if (status === "CLOSED") return "bg-slate-900 text-white border-slate-900";
-  return "bg-slate-50 text-slate-800 border-slate-200";
-}
+  const min = Math.min(...pts);
+  const max = Math.max(...pts);
+  const w = 220;
+  const h = 46;
 
-/* -------------------------------------------------------
-   Confirm Modal
-------------------------------------------------------- */
-function ConfirmModal({ open, title, message, confirmText, onConfirm, onClose }) {
-  if (!open) return null;
+  const normY = (v) => {
+    if (max === min) return h / 2;
+    const t = (v - min) / (max - min);
+    return h - t * h;
+  };
+
+  const step = w / (pts.length - 1);
+  const d = pts.map((v, i) => `${i === 0 ? "M" : "L"} ${Math.round(i * step)} ${Math.round(normY(v))}`).join(" ");
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center">
-      <button
-        className="absolute inset-0 bg-black/35"
-        onClick={onClose}
-        aria-label="Close"
-        type="button"
-      />
-      <div className="relative w-[420px] max-w-[92vw] rounded-2xl border border-slate-200 bg-white shadow-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-200">
-          <div className="text-sm font-black text-slate-900">{title}</div>
-        </div>
-
-        <div className="p-4">
-          <div className="text-sm font-semibold text-slate-700">{message}</div>
-
-          <div className="mt-4 flex items-center justify-end gap-2">
-            <button
-              onClick={onClose}
-              className="px-3 py-2 rounded-xl text-sm font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-              type="button"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => {
-                onConfirm?.();
-                onClose?.();
-              }}
-              className="px-3 py-2 rounded-xl text-sm font-extrabold border border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
-              type="button"
-            >
-              {confirmText || "Confirm"}
-            </button>
-          </div>
-        </div>
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-label="Mood regression sparkline">
+        <path d={d} fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-900" />
+      </svg>
+      <div className="mt-1 text-[11px] font-bold text-slate-500">
+        min {min} • max {max}
       </div>
     </div>
   );
 }
 
-/* -------------------------------------------------------
-   Calendar icon + modal
-------------------------------------------------------- */
-function CalendarIconButton({ onClick }) {
+/* -----------------------------
+   Mock data: 50 participants
+----------------------------- */
+function buildMockParticipants(count = 50) {
+  const today = new Date();
+  const firstNames = ["Aly", "Bea", "Cai", "Dan", "Eli", "Fae", "Gio", "Han", "Ian", "Jae", "Kai", "Lia", "Mia", "Noa", "Oli", "Pia", "Rae", "Sam", "Tia", "Uli"];
+  const lastNames = ["Santos", "Reyes", "Cruz", "Garcia", "Flores", "Ramos", "Mendoza", "Gomez", "Torres", "Navarro", "Castillo", "Aquino", "Bautista", "Valdez", "Mercado"];
+  const topics = ["Academic pressure", "Family conflict", "Anxiety", "Peer issues", "Sleep problems", "Burnout"];
+
+  return Array.from({ length: count }, (_, i) => {
+    const seed = 2000 + i * 41;
+    const rand = mulberry32(seed);
+
+    const anonymous = rand() < 0.35;
+    const name = anonymous ? null : `${pick(firstNames, i)} ${pick(lastNames, i * 3)}`;
+
+    const id = `P-${String(i + 1).padStart(3, "0")}`;
+    const topic = pick(topics, i * 2);
+
+    const threadLen = clamp(Math.floor(rand() * 8) + 4, 6, 14);
+    const thread = Array.from({ length: threadLen }, (_, k) => ({
+      id: `${id}-m${k + 1}`,
+      by: k % 2 === 0 ? "Participant" : "Counselor",
+      at: `${pad2(clamp(9 + (k % 7), 9, 18))}:${pad2(Math.floor(rand() * 59))}`,
+      text:
+        k % 2 === 0
+          ? "I’ve been feeling overwhelmed and it’s hard to focus."
+          : "Thanks for sharing. What’s been the hardest part recently?",
+    }));
+
+    const entryCount = clamp(10 + Math.floor(rand() * 10), 10, 20);
+    const moodEntries = Array.from({ length: entryCount }, () => {
+      const daysAgo = clamp(Math.floor(rand() * 28), 0, 28);
+      const d = new Date(today);
+      d.setDate(today.getDate() - daysAgo);
+
+      const mood = pick(MOODS, Math.floor(rand() * MOODS.length));
+      const reason = pick(REASONS, Math.floor(rand() * REASONS.length));
+
+      // ✅ Only 1 coping
+      const coping = pick(COPING_OPTIONS, Math.floor(rand() * COPING_OPTIONS.length));
+
+      return { date: ymd(d), mood, reason, coping };
+    }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+    const lastSeen = ymd(today);
+    const lastMessage = thread[thread.length - 1]?.text || "—";
+    const unread = rand() < 0.4;
+
+    return {
+      id,
+      anonymous,
+      displayName: anonymous ? `Anonymous Participant (${id})` : name,
+      topic,
+      read: !unread,
+      lastSeen,
+      lastMessage,
+      thread,
+      moodTracking: { entries: moodEntries },
+    };
+  });
+}
+
+/* -----------------------------
+   UI primitives
+----------------------------- */
+function Avatar({ label }) {
+  const initials = String(label || "?")
+    .replace(/Anonymous Participant\s*\([^)]+\)/i, "Anonymous")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase())
+    .join("");
+
+  return (
+    <div className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-black">
+      {initials || "A"}
+    </div>
+  );
+}
+
+function Badge({ children, tone = "neutral" }) {
+  const styles =
+    tone === "anon"
+      ? "bg-slate-900 text-white border-slate-900"
+      : tone === "unread"
+      ? "bg-indigo-50 text-indigo-800 border-indigo-200"
+      : "bg-slate-50 text-slate-700 border-slate-200";
+
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] font-extrabold ${styles}`}>
+      {children}
+    </span>
+  );
+}
+
+function Tab({ active, disabled, onClick, children }) {
   return (
     <button
-      onClick={onClick}
-      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-      title="Open calendar"
-      aria-label="Open calendar"
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      className={[
+        "px-3 py-2 rounded-xl text-sm font-extrabold transition border",
+        disabled ? "bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed" : "",
+        !disabled && active ? "bg-slate-900 text-white border-slate-900" : "",
+        !disabled && !active ? "bg-white text-slate-700 border-slate-200 hover:bg-slate-50" : "",
+      ].join(" ")}
       type="button"
+      title={disabled ? "Mood Tracker is not available for anonymous participants" : undefined}
     >
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-        <path
-          d="M7 3v2M17 3v2M4 9h16M6 5h12a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"
-          stroke="currentColor"
-          className="text-slate-700"
-          strokeWidth="2"
-          strokeLinecap="round"
-        />
-      </svg>
-      Calendar
+      {children}
     </button>
   );
 }
 
-function CalendarModal({ open, onClose, selectedYmd, onSelect, hasEntryYmdSet }) {
-  const [cursor, setCursor] = useState(() => {
-    const base = selectedYmd ? new Date(selectedYmd) : new Date();
-    return new Date(base.getFullYear(), base.getMonth(), 1);
-  });
-
-  useEffect(() => {
-    if (!open) return;
-    const base = selectedYmd ? new Date(selectedYmd) : new Date();
-    setCursor(new Date(base.getFullYear(), base.getMonth(), 1));
-  }, [open, selectedYmd]);
-
-  if (!open) return null;
-
-  const year = cursor.getFullYear();
-  const monthIndex = cursor.getMonth();
-  const grid = buildMonthGrid(year, monthIndex);
-  const monthLabel = cursor.toLocaleString(undefined, {
-    month: "long",
-    year: "numeric",
-  });
-
+/* -----------------------------
+   Messenger-like chat area
+----------------------------- */
+function ChatBubble({ by, text, at }) {
+  const isCounselor = by === "Counselor";
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center">
-      <button
-        className="absolute inset-0 bg-black/30"
-        onClick={onClose}
-        aria-label="Close calendar"
-        type="button"
-      />
-
-      <div className="relative w-[360px] max-w-[92vw] rounded-2xl border border-slate-200 bg-white shadow-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
-          <div className="text-sm font-black text-slate-900">Select date</div>
-          <button
-            onClick={onClose}
-            className="px-2 py-1 rounded-lg text-xs font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-            type="button"
-          >
-            ✕
-          </button>
+    <div className={["flex", isCounselor ? "justify-end" : "justify-start"].join(" ")}>
+      <div className={["max-w-[78%] space-y-1", isCounselor ? "items-end" : "items-start"].join(" ")}>
+        <div
+          className={[
+            "px-3.5 py-2.5 rounded-2xl text-sm font-semibold leading-relaxed whitespace-pre-wrap break-words border",
+            isCounselor
+              ? "bg-slate-900 text-white border-slate-900 rounded-br-md"
+              : "bg-white text-slate-800 border-slate-200 rounded-bl-md",
+          ].join(" ")}
+        >
+          {text}
         </div>
-
-        <div className="p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setCursor(new Date(year, monthIndex - 1, 1))}
-              className="px-2 py-1 rounded-lg text-xs font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-              type="button"
-            >
-              ‹
-            </button>
-
-            <div className="text-xs font-extrabold text-slate-700">{monthLabel}</div>
-
-            <button
-              onClick={() => setCursor(new Date(year, monthIndex + 1, 1))}
-              className="px-2 py-1 rounded-lg text-xs font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-              type="button"
-            >
-              ›
-            </button>
-          </div>
-
-          <div className="grid grid-cols-7 gap-1 text-center">
-            {["S", "M", "T", "W", "T", "F", "S"].map((d) => (
-              <div key={d} className="text-[11px] font-extrabold text-slate-500 py-1">
-                {d}
-              </div>
-            ))}
-
-            {grid.map((d) => {
-              const dYmd = ymd(d);
-              const inMonth = d.getMonth() === monthIndex;
-              const active = selectedYmd && dYmd === selectedYmd;
-              const hasEntry = hasEntryYmdSet?.has(dYmd);
-
-              return (
-                <button
-                  key={dYmd}
-                  onClick={() => {
-                    onSelect(dYmd);
-                    onClose();
-                  }}
-                  className={[
-                    "relative rounded-xl px-0 py-2 text-xs font-extrabold transition border",
-                    inMonth ? "text-slate-800" : "text-slate-400",
-                    active
-                      ? "bg-slate-900 text-white border-slate-900"
-                      : "bg-white border-slate-200 hover:bg-slate-50",
-                  ].join(" ")}
-                  type="button"
-                >
-                  {d.getDate()}
-                  {hasEntry ? (
-                    <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
+        <div className={["text-[11px] font-bold text-slate-400", isCounselor ? "text-right" : "text-left"].join(" ")}>
+          {at}
         </div>
       </div>
     </div>
   );
 }
 
-/* -------------------------------------------------------
-   Mood + Journal History Cards
-------------------------------------------------------- */
-function MoodTrackingHistoryCard({ moodTracking, day }) {
-  if (!moodTracking) {
-    return (
-      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="text-sm font-black text-slate-900">Mood Tracking</div>
-        <div className="mt-1 text-sm font-semibold text-slate-500">
-          No mood tracking data found.
-        </div>
-      </div>
-    );
-  }
+/* -----------------------------
+   Mood Tracker (enhanced)
+----------------------------- */
+function MoodTracker({ moodTracking, day, onPickDay }) {
+  const entries = safeArray(moodTracking?.entries).filter((e) => e?.date);
+  const sorted = [...entries].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const found = sorted.find((e) => e.date === day) || null;
 
-  const entries = Array.isArray(moodTracking.entries) ? moodTracking.entries : [];
-  const found = entries.find((e) => e.date === day) || null;
+  const overallSeries = sorted.map((e) => MOOD_SCORE[e.mood]).filter((v) => typeof v === "number" && Number.isFinite(v));
+  const last7Series = overallSeries.slice(-7);
+
+  const overallSlope = linearRegressionSlope(overallSeries);
+  const last7Slope = linearRegressionSlope(last7Series);
+
+  const overall = trendMeta(overallSlope);
+  const recent = trendMeta(last7Slope);
+
+  const overallAvg = avg(overallSeries);
+  const recentAvg = avg(last7Series);
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
+    <div className="space-y-3">
+      {/* Control row */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <div className="text-sm font-black text-slate-900">Mood Tracking</div>
-          <div className="mt-1 text-xs font-bold text-slate-500">
-            Date: <span className="font-extrabold text-slate-700">{day}</span>
-          </div>
+          <div className="text-sm font-black text-slate-900">Mood Tracker</div>
+          <div className="mt-1 text-xs font-bold text-slate-500">Mood • Reason • Coping (single) • Trends</div>
         </div>
-        <div className="text-xs font-bold text-slate-500">
-          Family consent:{" "}
-          <span className="text-slate-700 font-extrabold">
-            {moodTracking.familyConsent ? "Yes" : "No"}
-          </span>
-        </div>
+        <input
+          type="date"
+          value={day}
+          onChange={(e) => onPickDay(e.target.value)}
+          className="px-3 py-2 rounded-xl text-sm font-extrabold border border-slate-200 bg-white text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
+        />
       </div>
 
-      {!found ? (
-        <div className="text-sm font-semibold text-slate-500">
-          No mood entry for this date.
-        </div>
-      ) : (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="text-xs font-extrabold text-slate-700">{found.date}</div>
-            <div className="text-xs font-bold text-slate-500">
-              Mood:{" "}
-              <span className="font-extrabold text-slate-700">{found.mood ?? "—"}</span>
+      {/* Snapshot + trends */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-sm font-black text-slate-900">Day Snapshot</div>
+              <div className="mt-1 text-xs font-bold text-slate-500">
+                Selected: <span className="font-extrabold text-slate-700">{day}</span>
+              </div>
             </div>
+            {found ? <Badge>Mood: {found.mood}</Badge> : <Badge>—</Badge>}
           </div>
-          {found.note ? (
-            <div className="text-sm font-semibold text-slate-700">{found.note}</div>
+
+          {!found ? (
+            <div className="mt-3 text-sm font-semibold text-slate-500">No entry for this date.</div>
           ) : (
-            <div className="text-sm font-semibold text-slate-500">No note.</div>
+            <div className="mt-3 space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <Badge>Reason: {found.reason}</Badge>
+                <Badge>Coping: {found.coping}</Badge>
+              </div>
+
+              {/* Quick pick from recent dates */}
+              <div className="pt-2 border-t border-slate-200">
+                <div className="text-xs font-extrabold text-slate-700">Recent days</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {sorted
+                    .slice(-8)
+                    .reverse()
+                    .map((e) => (
+                      <button
+                        key={`${e.date}-${e.mood}`}
+                        onClick={() => onPickDay(e.date)}
+                        className={[
+                          "px-3 py-1.5 rounded-xl text-xs font-extrabold border transition",
+                          e.date === day
+                            ? "bg-slate-900 text-white border-slate-900"
+                            : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
+                        ].join(" ")}
+                        type="button"
+                      >
+                        {e.date.slice(5)} • {e.mood}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            </div>
           )}
         </div>
-      )}
-    </div>
-  );
-}
 
-function JournalHistoryCard({ journalEntry, day }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <div className="text-sm font-black text-slate-900">Journal</div>
-          <div className="mt-1 text-xs font-bold text-slate-500">
-            Date: <span className="font-extrabold text-slate-700">{day}</span>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-sm font-black text-slate-900">Regression Trend</div>
+              <div className="mt-1 text-xs font-bold text-slate-500">Overall vs Recent (last 7)</div>
+            </div>
           </div>
-        </div>
-        <div className="text-xs font-bold text-slate-500">
-          Status:{" "}
-          <span className="font-extrabold text-slate-700">
-            {journalEntry?.status || "—"}
-          </span>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-xs font-extrabold text-slate-700">Overall</div>
+              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] font-extrabold ${overall.badge}`}>
+                  {overall.arrow} {overall.label}
+                </span>
+                <span className="text-[11px] font-bold text-slate-500">
+                  avg {overallAvg == null ? "—" : overallAvg.toFixed(2)} • n {overallSeries.length}
+                </span>
+              </div>
+              <div className="mt-2">
+                <Sparkline values={overallSeries} />
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-xs font-extrabold text-slate-700">Last 7</div>
+              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] font-extrabold ${recent.badge}`}>
+                  {recent.arrow} {recent.label}
+                </span>
+                <span className="text-[11px] font-bold text-slate-500">
+                  avg {recentAvg == null ? "—" : recentAvg.toFixed(2)} • n {last7Series.length}
+                </span>
+              </div>
+              <div className="mt-2">
+                <Sparkline values={last7Series} />
+              </div>
+            </div>
+          </div>
+
+          <div className="text-[11px] font-bold text-slate-500">
+            Score mapping: Happy/Calm high • Angry/Sad/Disgust low
+          </div>
         </div>
       </div>
 
-      {!journalEntry ? (
-        <div className="text-sm font-semibold text-slate-500">
-          No journal entry for this date.
+      {/* Compact history */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+        <div className="text-sm font-black text-slate-900">History</div>
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="text-[11px] font-extrabold text-slate-500 border-b border-slate-200">
+                <th className="py-2 pr-3">Date</th>
+                <th className="py-2 pr-3">Mood</th>
+                <th className="py-2 pr-3">Reason</th>
+                <th className="py-2 pr-3">Coping</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {sorted
+                .slice()
+                .reverse()
+                .map((e) => (
+                  <tr key={`${e.date}-${e.mood}`} className="text-sm font-semibold text-slate-700">
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <button
+                        onClick={() => onPickDay(e.date)}
+                        className="font-extrabold text-slate-900 hover:underline"
+                        type="button"
+                      >
+                        {e.date}
+                      </button>
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">{e.mood}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">{e.reason}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">{e.coping}</td>
+                  </tr>
+                ))}
+              {sorted.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="py-3 text-sm font-semibold text-slate-500">
+                    No mood entries.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </div>
-      ) : (
-        <div className="rounded-xl border border-slate-200 bg-white p-3">
-          <div className="text-sm font-semibold text-slate-700 whitespace-pre-wrap break-words">
-            {journalEntry.note || "—"}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* -------------------------------------------------------
-   Status Selector (Counselor)
-------------------------------------------------------- */
-function StatusSelector({ value, onChange }) {
-  const meta = STATUS[value] || null;
-
-  return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <div
-        className={[
-          "inline-flex items-center gap-2 px-2.5 py-1 rounded-full border text-[11px] font-extrabold",
-          badgeClassForStatus(value),
-        ].join(" ")}
-        title={meta?.desc || value}
-      >
-        {value}
       </div>
-
-      <select
-        value={value}
-        onChange={(e) => onChange?.(e.target.value)}
-        className="px-3 py-2 rounded-xl text-sm font-extrabold border border-slate-200 bg-white text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
-      >
-        {COUNSELOR_VISIBLE_STATUSES.map((k) => (
-          <option key={k} value={k}>
-            {k}
-          </option>
-        ))}
-      </select>
     </div>
   );
 }
 
+/* -----------------------------
+   Main component
+----------------------------- */
 export default function Inbox() {
-  const [items, setItems] = useState(() => getAskInboxItems());
-  const [filter, setFilter] = useState("all");
-  const [selectedId, setSelectedId] = useState(items?.[0]?.id || "");
-  const [reply, setReply] = useState("");
-  const [toast, setToast] = useState("");
-  const [search, setSearch] = useState("");
-
-  // ✅ Mobile tabs: messages / conversation / details
-  const [mobileTab, setMobileTab] = useState("messages");
-
   const today = useMemo(() => ymd(new Date()), []);
-  const [historyDay, setHistoryDay] = useState(today);
-  const [calendarOpen, setCalendarOpen] = useState(false);
+  const seeded = useMemo(() => buildMockParticipants(50), []);
+  const [items, setItems] = useState(seeded);
 
-  // ✅ Status store per thread
-  const [statusById, setStatusById] = useState(() => {
-    const map = {};
-    for (const x of getAskInboxItems() || []) {
-      map[x.id] = x.status || "NEW"; // default NEW
-    }
-    return map;
-  });
+  const [selectedId, setSelectedId] = useState(items?.[0]?.id || "");
+  const [tab, setTab] = useState("chat"); // chat | mood
+  const [search, setSearch] = useState("");
+  const [filterUnread, setFilterUnread] = useState(false);
 
-  // confirm modals
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [confirmCfg, setConfirmCfg] = useState({
-    title: "",
-    message: "",
-    confirmText: "",
-    onConfirm: null,
-  });
+  const [day, setDay] = useState(today);
+  const [draft, setDraft] = useState("");
 
-  const selected = useMemo(
-    () => items.find((x) => x.id === selectedId) || null,
-    [items, selectedId]
-  );
-
-  const openConfirm = (cfg) => {
-    setConfirmCfg(cfg);
-    setConfirmOpen(true);
-  };
-
-  const notify = (msg, ms = 1400) => {
-    setToast(msg);
-    window.clearTimeout(window.__inboxToastTimer);
-    window.__inboxToastTimer = window.setTimeout(() => setToast(""), ms);
-  };
-
-  const markRead = (id) => {
-    setItems((prev) => prev.map((x) => (x.id === id ? { ...x, read: true } : x)));
-  };
-
-  const filtered = useMemo(() => {
+  const list = useMemo(() => {
     let base = items;
-
-    if (filter === "unread") base = base.filter((x) => !x.read);
-    if (filter === "flagged") base = base.filter((x) => (x.flags || []).length);
+    if (filterUnread) base = base.filter((x) => !x.read);
 
     const q = search.trim().toLowerCase();
-    if (q) {
-      base = base.filter((x) => {
-        const name = (x.anonymous ? "Anonymous Student" : x.studentName || "").toLowerCase();
-        const topic = (x.topic || "").toLowerCase();
-        const msg = (x.message || "").toLowerCase();
-        return name.includes(q) || topic.includes(q) || msg.includes(q);
-      });
-    }
+    if (!q) return base;
 
-    return base;
-  }, [items, filter, search]);
+    return base.filter((x) => {
+      const name = (x.displayName || "").toLowerCase();
+      const topic = (x.topic || "").toLowerCase();
+      const msg = (x.lastMessage || "").toLowerCase();
+      return name.includes(q) || topic.includes(q) || msg.includes(q);
+    });
+  }, [items, filterUnread, search]);
 
-  const sendReply = () => {
+  const selected = useMemo(() => items.find((x) => x.id === selectedId) || null, [items, selectedId]);
+
+  const chatScrollRef = useRef(null);
+
+  useEffect(() => {
+    if (!chatScrollRef.current) return;
+    chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+  }, [selectedId, selected?.thread?.length, tab]);
+
+  const markRead = (id) => setItems((prev) => prev.map((x) => (x.id === id ? { ...x, read: true } : x)));
+
+  const selectChat = (id) => {
+    setSelectedId(id);
+    markRead(id);
+    setTab("chat");
+    setDay(today);
+    setDraft("");
+  };
+
+  const send = () => {
     if (!selected) return;
-    const text = reply.trim();
+    const text = draft.trim();
     if (!text) return;
 
-    const next = counselorReplyToAsk(selected.id, text);
+    const now = new Date();
+    const at = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+
+    const next = {
+      ...selected,
+      thread: [...safeArray(selected.thread), { id: `${selected.id}-c-${Date.now()}`, by: "Counselor", at, text }],
+      lastMessage: text,
+    };
+
     setItems((prev) => prev.map((x) => (x.id === selected.id ? next : x)));
-    setReply("");
-    notify("Reply sent.");
+    setDraft("");
   };
 
-  const createIncidentNow = () => {
-    if (!selected) return;
-
-    setItems((prev) =>
-      prev.map((x) =>
-        x.id === selected.id
-          ? {
-              ...x,
-              incidentId: x.incidentId || `INC-${Date.now()}`,
-              incidentStatus: "Open",
-            }
-          : x
-      )
-    );
-
-    notify("Incident created. You can now request unmask.", 1800);
-  };
-
-  const doUnmaskNow = () => {
-    if (!selected) return;
-
-    if (!selected.incidentId) {
-      notify("Unmask is only allowed after an incident is created.", 1800);
-      return;
-    }
-
-    const next = requestUnmaskIdentity(selected.id);
-    setItems((prev) => prev.map((x) => (x.id === selected.id ? next : x)));
-    notify("Identity revealed for investigation.", 1800);
-  };
-
-  // ✅ Counselor sets status (UI + API)
-  const setThreadStatus = async (status) => {
-    if (!selected) return;
-
-    const prev = statusById[selected.id] || "NEW";
-    setStatusById((p) => ({ ...p, [selected.id]: status }));
-
-    try {
-      // If your counselor.api doesn't have this yet, add it (backend section below)
-      if (typeof counselorSetThreadStatus === "function") {
-        await counselorSetThreadStatus(selected.id, status);
-      }
-      notify(`Status updated: ${status}`);
-    } catch (e) {
-      // rollback
-      setStatusById((p) => ({ ...p, [selected.id]: prev }));
-      notify("Failed to update status. Check API.", 1800);
-      // optional: console error
-      // eslint-disable-next-line no-console
-      console.error(e);
-    }
-  };
-
-  // history lookups
-  const phq9History = useMemo(() => {
-    if (!selected) return [];
-    if (Array.isArray(selected.phq9History)) return selected.phq9History;
-    if (Array.isArray(selected.phq9s)) return selected.phq9s;
-    return selected.phq9 ? [selected.phq9] : [];
-  }, [selected]);
-
-  const phq9ForDay = useMemo(() => {
-    if (!phq9History.length) return null;
-    return (
-      phq9History.find((p) => p.date === historyDay) ||
-      phq9History.find((p) => p.submittedDate === historyDay) ||
-      phq9History.find((p) => (p.submittedAt || "").slice(0, 10) === historyDay) ||
-      null
-    );
-  }, [phq9History, historyDay]);
-
-  const moodEntryDaySet = useMemo(() => {
-    const entries = selected?.moodTracking?.entries;
-    if (!Array.isArray(entries)) return new Set();
-    return new Set(entries.map((e) => e.date).filter(Boolean));
-  }, [selected]);
-
-  const journalHistory = useMemo(() => {
-    if (!selected) return [];
-    if (Array.isArray(selected.journalEntries)) return selected.journalEntries;
-    if (Array.isArray(selected.journalHistory)) return selected.journalHistory;
-    if (Array.isArray(selected.journal)) return selected.journal;
-    return [];
-  }, [selected]);
-
-  const journalForDay = useMemo(() => {
-    if (!journalHistory.length) return null;
-    return (
-      journalHistory.find((j) => j.date === historyDay) ||
-      journalHistory.find((j) => (j.createdAt || "").slice(0, 10) === historyDay) ||
-      null
-    );
-  }, [journalHistory, historyDay]);
-
-  const historyDotsSet = useMemo(() => {
-    const set = new Set();
-    for (const d of moodEntryDaySet) set.add(d);
-    for (const p of phq9History) {
-      const d =
-        p.date ||
-        p.submittedDate ||
-        (p.submittedAt ? String(p.submittedAt).slice(0, 10) : null);
-      if (d) set.add(d);
-    }
-    for (const j of journalHistory) {
-      const d = j.date || (j.createdAt ? String(j.createdAt).slice(0, 10) : null);
-      if (d) set.add(d);
-    }
-    return set;
-  }, [moodEntryDaySet, phq9History, journalHistory]);
-
-  const FILTERS = [
-    { key: "all", label: "All" },
-    { key: "unread", label: "Unread" },
-    { key: "flagged", label: "Flagged" },
-  ];
-
-  const currentStatus = selected ? statusById[selected.id] || "NEW" : "—";
-  const statusMeta = STATUS[currentStatus] || null;
+  const moodDisabled = !!selected?.anonymous;
 
   return (
-    <div className="space-y-4">
-      {/* Toast */}
-      {toast ? (
-        <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
-          <span className="w-2 h-2 rounded-full bg-emerald-500" />
-          {toast}
-        </div>
-      ) : null}
-
-      {/* Confirm Modal */}
-      <ConfirmModal
-        open={confirmOpen}
-        title={confirmCfg.title}
-        message={confirmCfg.message}
-        confirmText={confirmCfg.confirmText}
-        onConfirm={confirmCfg.onConfirm}
-        onClose={() => setConfirmOpen(false)}
-      />
-
-      {/* Mobile Tabs */}
-      <div className="flex items-center gap-2 flex-wrap xl:hidden">
-        {[
-          { key: "messages", label: "Messages" },
-          { key: "conversation", label: "Conversation" },
-          { key: "details", label: "Details" },
-        ].map((t) => {
-          const active = mobileTab === t.key;
-          return (
+    <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4">
+      {/* LEFT: Messenger-like list */}
+      <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-200 bg-white space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-black text-slate-900">Student List</div>
             <button
-              key={t.key}
-              onClick={() => setMobileTab(t.key)}
+              onClick={() => setFilterUnread((v) => !v)}
               className={[
                 "px-3 py-2 rounded-xl text-sm font-extrabold transition border",
-                active
-                  ? "bg-slate-900 text-white border-slate-900"
-                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
+                filterUnread ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
               ].join(" ")}
               type="button"
             >
-              {t.label}
+              Unread
             </button>
-          );
-        })}
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr_420px] gap-4">
-        {/* LEFT: Messages */}
-        <section
-          className={[
-            "rounded-2xl border border-slate-200 bg-white overflow-hidden",
-            "xl:block",
-            mobileTab === "messages" ? "block" : "hidden",
-          ].join(" ")}
-        >
-          <div className="px-4 py-3 border-b border-slate-200 bg-slate-50 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-extrabold text-slate-700">
-                Messages <span className="text-slate-500">({filtered.length})</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {FILTERS.map((f) => {
-                  const active = f.key === filter;
-                  return (
-                    <button
-                      key={f.key}
-                      onClick={() => setFilter(f.key)}
-                      className={[
-                        "px-3 py-2 rounded-xl text-sm font-extrabold transition border",
-                        active
-                          ? "bg-slate-900 text-white border-slate-900"
-                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
-                      ].join(" ")}
-                      type="button"
-                    >
-                      {f.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Search */}
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name, topic, or message..."
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:ring-4 focus:ring-slate-100"
-            />
           </div>
 
-          <div className="h-[72vh] overflow-y-auto overflow-x-hidden">
-            {filtered.length === 0 ? (
-              <div className="px-4 py-6 text-sm font-semibold text-slate-500">
-                No messages found.
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-100">
-                {filtered.map((x) => {
-                  const active = x.id === selectedId;
-                  const st = statusById[x.id] || "NEW";
-                  const urgentPulse = st === "URGENT" || st === "CRISIS";
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search…"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:ring-4 focus:ring-slate-100"
+          />
+        </div>
 
-                  return (
-                    <button
-                      key={x.id}
-                      onClick={() => {
-                        setSelectedId(x.id);
-                        markRead(x.id);
-                        setHistoryDay(today);
-                        if (window.innerWidth < 1280) setMobileTab("conversation");
-                      }}
-                      className={[
-                        "w-full text-left px-4 py-3 transition",
-                        active ? "bg-slate-50" : "bg-white hover:bg-slate-50/70",
-                      ].join(" ")}
-                      type="button"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {/* dot pulse only for urgent/crisis */}
-                            <span
-                              className={[
-                                "w-2 h-2 rounded-full",
-                                urgentPulse ? "bg-red-600 animate-pulse" : "bg-slate-300",
-                              ].join(" ")}
-                              title={st}
-                            />
-
-                            <div className="text-sm font-extrabold text-slate-800 truncate">
-                              {x.anonymous ? "Anonymous Student" : x.studentName}
-                            </div>
-
-                            {!x.read ? (
-                              <span className="text-[11px] font-extrabold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">
-                                Unread
-                              </span>
-                            ) : null}
-
-                            <span
-                              className={[
-                                "text-[11px] font-extrabold px-2 py-0.5 rounded-full border",
-                                badgeClassForStatus(st),
-                              ].join(" ")}
-                            >
-                              {st}
-                            </span>
-
-                            {(x.flags || []).length ? (
-                              <span className="text-[11px] font-extrabold text-red-700 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">
-                                Flagged
-                              </span>
-                            ) : null}
-                          </div>
-
-                          <div className="mt-1 text-xs font-semibold text-slate-500">
-                            Topic:{" "}
-                            <span className="font-extrabold text-slate-700">
-                              {x.topic}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="text-xs font-bold text-slate-500 whitespace-nowrap">
-                          {x.date}
-                        </div>
-                      </div>
-
-                      <div className="mt-2 text-sm font-semibold text-slate-600 line-clamp-2">
-                        {x.message}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <style>{`
-            .line-clamp-2{
-              display:-webkit-box;
-              -webkit-line-clamp:2;
-              -webkit-box-orient:vertical;
-              overflow:hidden;
-            }
-          `}</style>
-        </section>
-
-        {/* MIDDLE: Conversation (mobile clarity fix) */}
-        <section
-          className={[
-            "rounded-2xl border border-slate-200 bg-white overflow-hidden",
-            "xl:block",
-            mobileTab === "conversation" ? "block" : "hidden",
-          ].join(" ")}
-        >
-          <div className="px-4 py-3 border-b border-slate-200 bg-white">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-extrabold text-slate-700">
-                Conversation
-              </div>
-
-              {/* Mobile back button for clarity */}
-              <button
-                className="xl:hidden px-3 py-2 rounded-xl text-sm font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-                onClick={() => setMobileTab("messages")}
-                type="button"
-              >
-                Back
-              </button>
-            </div>
-          </div>
-
-          {!selected ? (
-            <div className="px-4 py-6 text-sm font-semibold text-slate-500">
-              Select a message to view conversation.
-            </div>
+        <div className="h-[78vh] overflow-y-auto">
+          {list.length === 0 ? (
+            <div className="px-4 py-6 text-sm font-semibold text-slate-500">No results.</div>
           ) : (
-            // ✅ Use full viewport height on mobile so thread is visible
-            <div className="h-[78vh] xl:h-[72vh] flex flex-col">
-              {/* Header */}
-              <div className="px-4 py-4 border-b border-slate-200 bg-white space-y-3">
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold text-slate-500">
-                      {selected.date} • {selected.topic}
-                    </div>
-
-                    <div className="mt-1 text-lg font-black text-slate-900">
-                      {selected.anonymous ? "Anonymous Student" : selected.studentName}
-                    </div>
-
-                    <div className="mt-1 text-sm font-semibold text-slate-500">
-                      {selected.anonymous
-                        ? "Identity is hidden unless an incident is created and investigation is approved."
-                        : "Student identity is visible (non-anonymous)."}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      onClick={() =>
-                        openConfirm({
-                          title: "Create incident?",
-                          message:
-                            "This will create an incident record and unlock the unmask request flow.",
-                          confirmText: "Create Incident",
-                          onConfirm: createIncidentNow,
-                        })
-                      }
-                      className="px-3 py-2 rounded-xl text-sm font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-                      type="button"
-                    >
-                      Create Incident
-                    </button>
-
-                    <button
-                      onClick={() =>
-                        openConfirm({
-                          title: "Request unmask?",
-                          message:
-                            "Unmasking reveals student identity for investigation. Proceed?",
-                          confirmText: "Confirm Unmask",
-                          onConfirm: doUnmaskNow,
-                        })
-                      }
-                      className="px-3 py-2 rounded-xl text-sm font-extrabold border border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
-                      type="button"
-                    >
-                      Request Unmask
-                    </button>
-                  </div>
-                </div>
-
-                {/* ✅ Counselor status selector */}
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold text-slate-500">
-                      Current status
-                    </div>
-                    <div className="mt-1 text-sm font-semibold text-slate-700">
-                      {statusMeta?.desc || ""}
-                    </div>
-                  </div>
-
-                  <StatusSelector value={currentStatus} onChange={setThreadStatus} />
-                </div>
-              </div>
-
-              {/* Student message */}
-              <div className="px-4 py-4 border-b border-slate-200 bg-white">
-                <div className="text-sm font-extrabold text-slate-700">
-                  Student Message
-                </div>
-                <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 leading-relaxed whitespace-pre-wrap break-words">
-                  {selected.message}
-                </div>
-              </div>
-
-              {/* ✅ ONLY THREAD SCROLLS + clearer on mobile */}
-              <div className="flex-1 min-h-0 px-4 py-4 overflow-y-auto bg-slate-50">
-                <div className="sticky top-0 z-10 bg-slate-50 pb-2">
-                  <div className="text-sm font-extrabold text-slate-700">Thread</div>
-                  <div className="text-xs font-semibold text-slate-500 mt-1">
-                    Scroll here to view replies.
-                  </div>
-                </div>
-
-                {(selected.thread || []).length === 0 ? (
-                  <div className="mt-3 text-sm font-semibold text-slate-500">
-                    No replies yet.
-                  </div>
-                ) : (
-                  <div className="mt-3 space-y-2">
-                    {selected.thread.map((t) => (
-                      <div
-                        key={t.id}
-                        className={[
-                          "rounded-2xl border px-4 py-3",
-                          t.by === "Counselor"
-                            ? "border-emerald-100 bg-emerald-50"
-                            : "border-slate-200 bg-white",
-                        ].join(" ")}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-xs font-extrabold text-slate-700">
-                            {t.by}
-                          </div>
-                          <div className="text-xs font-bold text-slate-500">
-                            {t.at}
-                          </div>
-                        </div>
-                        <div className="mt-2 text-sm font-semibold text-slate-700 whitespace-pre-wrap break-words">
-                          {t.text}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Reply sticky */}
-              <div className="sticky bottom-0 z-20 border-t border-slate-200 bg-white px-4 py-4">
-                <div className="text-sm font-extrabold text-slate-700">Reply</div>
-
-                <textarea
-                  value={reply}
-                  onChange={(e) => setReply(e.target.value)}
-                  rows={3}
-                  placeholder="Write a supportive reply..."
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
-                />
-
-                <div className="mt-2 flex justify-end">
+            <div className="divide-y divide-slate-100">
+              {list.map((x) => {
+                const active = x.id === selectedId;
+                return (
                   <button
-                    onClick={sendReply}
-                    className="px-4 py-2.5 rounded-xl text-sm font-extrabold bg-slate-900 text-white hover:bg-slate-800"
+                    key={x.id}
+                    onClick={() => selectChat(x.id)}
+                    className={[
+                      "w-full text-left px-4 py-3 transition flex gap-3",
+                      active ? "bg-slate-50" : "bg-white hover:bg-slate-50/70",
+                    ].join(" ")}
                     type="button"
                   >
-                    Send Reply
+                    <Avatar label={x.displayName} />
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="text-sm font-black text-slate-900 truncate">{x.displayName}</div>
+                            {x.anonymous ? <Badge tone="anon">Anonymous</Badge> : null}
+                            {!x.read ? <Badge tone="unread">Unread</Badge> : null}
+                          </div>
+                          <div className="mt-0.5 text-[12px] font-bold text-slate-500 truncate">{x.topic}</div>
+                        </div>
+                        <div className="text-[11px] font-bold text-slate-400 whitespace-nowrap">{x.lastSeen}</div>
+                      </div>
+
+                      <div className="mt-1 text-[13px] font-semibold text-slate-600 truncate">{x.lastMessage}</div>
+                    </div>
                   </button>
-                </div>
-              </div>
+                );
+              })}
             </div>
           )}
-        </section>
+        </div>
+      </section>
 
-        {/* RIGHT: Details */}
-        <section
-          className={[
-            "rounded-2xl border border-slate-200 bg-white overflow-hidden",
-            "xl:block",
-            mobileTab === "details" ? "block" : "hidden",
-          ].join(" ")}
-        >
-          <div className="px-4 py-3 border-b border-slate-200 bg-white flex items-center justify-between">
-            <div>
-              <div className="text-sm font-extrabold text-slate-700">Details</div>
-              <div className="text-xs font-bold text-slate-500 mt-0.5">
-                Viewing history for:{" "}
-                <span className="font-extrabold text-slate-700">{historyDay}</span>
+      {/* RIGHT: Messenger-like conversation */}
+      <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+        {/* Header */}
+        <div className="px-4 py-3 border-b border-slate-200 bg-white flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3 min-w-0">
+            {selected ? <Avatar label={selected.displayName} /> : <Avatar label="—" />}
+            <div className="min-w-0">
+              <div className="text-sm font-black text-slate-900 truncate">{selected?.displayName || "Select a chat"}</div>
+              <div className="text-[12px] font-bold text-slate-500 truncate">
+                {selected ? (
+                  <>
+                    {selected.topic}
+                    {selected.anonymous ? " • Anonymous Participant" : ""}
+                  </>
+                ) : (
+                  "—"
+                )}
               </div>
-              {selected ? (
-                <div className="text-xs font-bold text-slate-500 mt-1">
-                  Status:{" "}
-                  <span className="font-extrabold text-slate-700">{currentStatus}</span>
-                </div>
-              ) : null}
             </div>
-
-            <CalendarIconButton onClick={() => setCalendarOpen(true)} />
           </div>
 
-          <CalendarModal
-            open={calendarOpen}
-            onClose={() => setCalendarOpen(false)}
-            selectedYmd={historyDay}
-            onSelect={setHistoryDay}
-            hasEntryYmdSet={historyDotsSet}
-          />
+          <div className="flex items-center gap-2">
+            <Tab active={tab === "chat"} onClick={() => setTab("chat")}>
+              Messages
+            </Tab>
+            <Tab active={tab === "mood"} disabled={moodDisabled} onClick={() => setTab("mood")}>
+              Mood Tracker
+            </Tab>
+          </div>
+        </div>
 
-          {!selected ? (
-            <div className="px-4 py-6 text-sm font-semibold text-slate-500">
-              Select a message to view details.
-            </div>
-          ) : (
-            <div className="px-4 py-4 space-y-4 max-h-[72vh] overflow-y-auto">
-              {selected.phq9 ? (
-                <div className="space-y-2">
-                  <div className="text-sm font-extrabold text-slate-700">
-                    PHQ-9 Screening (History)
+        {!selected ? (
+          <div className="px-4 py-8 text-sm font-semibold text-slate-500">Pick a student from the left.</div>
+        ) : (
+          <>
+            {tab === "chat" ? (
+              <div className="h-[78vh] flex flex-col">
+                {/* Scroll area */}
+                <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto bg-slate-50 px-4 py-4 space-y-3">
+                  <div className="flex justify-center">
+                    <span className="text-[11px] font-bold text-slate-400 bg-white border border-slate-200 px-3 py-1 rounded-full">
+                      {selected.read ? "Seen" : "Delivered"} • {selected.lastSeen}
+                    </span>
                   </div>
-                  {phq9ForDay ? (
-                    <PHQ9Card phq9={phq9ForDay} />
-                  ) : (
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="text-sm font-black text-slate-900">PHQ-9</div>
-                      <div className="mt-1 text-sm font-semibold text-slate-500">
-                        No PHQ-9 record for {historyDay}.
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : null}
 
-              <MoodTrackingHistoryCard moodTracking={selected.moodTracking} day={historyDay} />
-              <JournalHistoryCard journalEntry={journalForDay} day={historyDay} />
-            </div>
-          )}
-        </section>
-      </div>
+                  {safeArray(selected.thread).map((m) => (
+                    <ChatBubble key={m.id} by={m.by} text={m.text} at={m.at} />
+                  ))}
+                </div>
+
+                {/* Sticky composer */}
+                <div className="border-t border-slate-200 bg-white px-4 py-3">
+                  <div className="flex items-end gap-2">
+                    <textarea
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      rows={1}
+                      placeholder="Type a message…"
+                      className="flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          send();
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={send}
+                      className="px-4 py-3 rounded-2xl text-sm font-extrabold bg-slate-900 text-white hover:bg-slate-800"
+                      type="button"
+                    >
+                      Send
+                    </button>
+                  </div>
+                  <div className="mt-1 text-[11px] font-bold text-slate-400">Enter = send • Shift+Enter = new line</div>
+                </div>
+              </div>
+            ) : null}
+
+            {tab === "mood" ? (
+              <div className="h-[78vh] overflow-y-auto bg-slate-50 p-4">
+                {selected.anonymous ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                    <div className="text-sm font-black text-slate-900">Mood Tracker locked</div>
+                    <div className="mt-2 text-sm font-semibold text-slate-600">
+                      This participant is anonymous, so mood history is not available.
+                    </div>
+                  </div>
+                ) : (
+                  <MoodTracker moodTracking={selected.moodTracking} day={day} onPickDay={setDay} />
+                )}
+              </div>
+            ) : null}
+          </>
+        )}
+      </section>
     </div>
   );
 }

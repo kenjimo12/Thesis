@@ -26,6 +26,7 @@ import ProfileSettings from "../pages/Student/ProfileSettings";
 // Admin/Counselor page
 import CounselorDashboard from "../pages/CounselorDashboard/CounselorDashboard";
 
+// ✅ your protected wrapper (currently OFF inside ProtectedRoute.js)
 import ProtectedRoute from "./ProtectedRoute";
 
 export default function AppRoutes() {
@@ -35,10 +36,23 @@ export default function AppRoutes() {
 
       <Routes>
         {/* =======================
-            PUBLIC (NO TOKEN NEEDED)
-           ======================= */}
+            COUNSELOR DASHBOARD
+            NO NAVBAR + NO FOOTER
+            ======================= */}
+        <Route element={<ProtectedRoute />}>
+          <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
+        </Route>
+
+        {/* =======================
+            MAIN SITE (WITH NAVBAR/FOOTER)
+            ======================= */}
         <Route element={<MainLayout />}>
-          {/* Public auth pages */}
+          {/* PUBLIC */}
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/about-us" element={<AboutUs />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/services/emergency" element={<Emergency />} />
+
           <Route path="/login" element={<Login />} />
           <Route path="/sign-up" element={<Signup />} />
           <Route path="/forgotpassword" element={<ForgotPassword />} />
@@ -54,22 +68,24 @@ export default function AppRoutes() {
         {/* =======================
             PROTECTED (TOKEN REQUIRED)
            ======================= */}
+        <Route element={<ProtectedRoute />}>
           <Route element={<MainLayout />}>
             {/* ✅ Restricted: Guidance Counseling */}
             <Route path="/services/counseling" element={<GuidanceCounseling />} />
             <Route path="/services/counseling/request" element={<Request />} />
             <Route path="/services/counseling/requests" element={<ViewRequest />} />
 
-            {/* ✅ Restricted: Other services */}
+            {/* Other services */}
             <Route path="/services/journal" element={<Journal />} />
             <Route path="/services/assessment" element={<Assessment />} />
 
-            {/* ✅ Restricted: Student page */}
+            {/* Student */}
             <Route path="/profile-settings" element={<ProfileSettings />} />
 
             {/* ✅ Restricted: Counselor dashboard (keep protected if you want) */}
             <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
           </Route>
+        </Route>
       </Routes>
     </>
   );

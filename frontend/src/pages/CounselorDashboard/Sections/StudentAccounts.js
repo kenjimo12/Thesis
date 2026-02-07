@@ -634,7 +634,8 @@ function ProfileSettingsForm({ profile, onChange, onSave, onCancel, saving, erro
       data-cc-nodrag="1"
     >
       <div className={cx("rounded-2xl border overflow-hidden", THEME.border)}>
-        <div className={cx("h-1.5", THEME.primaryBg)} aria-hidden="true" />
+      <div className={cx("h-1.5", THEME.surface)} aria-hidden="true" />
+
 
         <div className="px-4 sm:px-6 py-5 sm:py-6">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
