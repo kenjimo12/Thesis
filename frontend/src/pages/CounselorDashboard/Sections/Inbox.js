@@ -1,11 +1,18 @@
 // src/pages/CounselorDashboard/Sections/Inbox.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useInView, useReducedMotion } from "framer-motion";
 
 /**
  * Messenger-like UI + Mood Tracker (enhanced)
  * - UI-only (NO backend)
  * - Anonymous participants: Mood Tracker is locked (cannot view)
  * - Coping: single value only
+ *
+ * Enhancements:
+ * - Nunito font (via inline fontFamily on root; load font in index.html for best results)
+ * - Mobile: list <-> conversation with swipe-right back
+ * - Conversation auto-scrolls to bottom when sending (forced after DOM paint)
+ * - Inbox uses AnimatedList template behavior (in-view scale/opacity + gradients + optional arrow navigation)
  */
 
 /* -----------------------------
@@ -53,6 +60,34 @@ function mulberry32(seed) {
 function pick(arr, idx) {
   return arr[idx % arr.length];
 }
+function scrollToBottomNow(ref) {
+  const el = ref?.current;
+  if (!el) return false;
+  el.scrollTop = el.scrollHeight;
+  return true;
+}
+
+function scrollToBottomAfterPaint(ref, tries = 60) {
+  const attempt = () => {
+    const el = ref?.current;
+    if (!el) {
+      if (tries-- > 0) requestAnimationFrame(attempt);
+      return;
+    }
+
+    // if content is still loading / layout is still changing, keep trying
+    const before = el.scrollTop;
+    el.scrollTop = el.scrollHeight;
+
+    const moved = el.scrollTop !== before;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+
+    if (!atBottom && tries-- > 0) requestAnimationFrame(attempt);
+  };
+
+  requestAnimationFrame(attempt);
+}
+
 
 /**
  * Mood score mapping for regression
@@ -175,8 +210,6 @@ function buildMockParticipants(count = 50) {
 
       const mood = pick(MOODS, Math.floor(rand() * MOODS.length));
       const reason = pick(REASONS, Math.floor(rand() * REASONS.length));
-
-      // ✅ Only 1 coping
       const coping = pick(COPING_OPTIONS, Math.floor(rand() * COPING_OPTIONS.length));
 
       return { date: ymd(d), mood, reason, coping };
@@ -213,7 +246,7 @@ function Avatar({ label }) {
     .join("");
 
   return (
-    <div className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-black">
+    <div className="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-black shadow-sm">
       {initials || "A"}
     </div>
   );
@@ -242,7 +275,7 @@ function Tab({ active, disabled, onClick, children }) {
       className={[
         "px-3 py-2 rounded-xl text-sm font-extrabold transition border",
         disabled ? "bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed" : "",
-        !disabled && active ? "bg-slate-900 text-white border-slate-900" : "",
+        !disabled && active ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "",
         !disabled && !active ? "bg-white text-slate-700 border-slate-200 hover:bg-slate-50" : "",
       ].join(" ")}
       type="button"
@@ -250,6 +283,204 @@ function Tab({ active, disabled, onClick, children }) {
     >
       {children}
     </button>
+  );
+}
+
+/* -----------------------------
+   Animated Inbox List (template-based)
+----------------------------- */
+function AnimatedItem({ children, delay = 0, index, onMouseEnter, onClick }) {
+  const ref = useRef(null);
+  const inView = useInView(ref, { amount: 0.5, once: false });
+
+  return (
+    <motion.div
+      ref={ref}
+      data-index={index}
+      onMouseEnter={onMouseEnter}
+      onClick={onClick}
+      initial={{ scale: 0.98, opacity: 0 }}
+      animate={inView ? { scale: 1, opacity: 1 } : { scale: 0.98, opacity: 0 }}
+      transition={{ duration: 0.18, delay }}
+      className="cursor-pointer"
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function AnimatedInboxList({
+  items,
+  selectedId,
+  onItemSelect,
+  showGradients = true,
+  enableArrowNavigation = true,
+  displayScrollbar = true,
+  className = "",
+}) {
+  const listRef = useRef(null);
+
+  const initialIndex = Math.max(
+    0,
+    safeArray(items).findIndex((x) => x?.id === selectedId)
+  );
+
+  const [selectedIndex, setSelectedIndex] = useState(initialIndex);
+  const [keyboardNav, setKeyboardNav] = useState(false);
+  const [topGradientOpacity, setTopGradientOpacity] = useState(0);
+  const [bottomGradientOpacity, setBottomGradientOpacity] = useState(1);
+
+  // keep highlight synced when selectedId changes (e.g. after click)
+  useEffect(() => {
+    const idx = safeArray(items).findIndex((x) => x?.id === selectedId);
+    if (idx >= 0) setSelectedIndex(idx);
+  }, [selectedId, items]);
+
+  const handleItemMouseEnter = useCallback((index) => {
+    setSelectedIndex(index);
+  }, []);
+
+  const handleItemClick = useCallback(
+    (item, index) => {
+      setSelectedIndex(index);
+      onItemSelect?.(item, index);
+    },
+    [onItemSelect]
+  );
+
+  const handleScroll = useCallback((e) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.target;
+    setTopGradientOpacity(Math.min(scrollTop / 50, 1));
+    const bottomDistance = scrollHeight - (scrollTop + clientHeight);
+    setBottomGradientOpacity(scrollHeight <= clientHeight ? 0 : Math.min(bottomDistance / 50, 1));
+  }, []);
+
+  // Arrow navigation + Enter to open
+  useEffect(() => {
+    if (!enableArrowNavigation) return;
+
+    const handleKeyDown = (e) => {
+      // only when list exists
+      if (!listRef.current) return;
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setKeyboardNav(true);
+        setSelectedIndex((prev) => Math.min(prev + 1, items.length - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setKeyboardNav(true);
+        setSelectedIndex((prev) => Math.max(prev - 1, 0));
+      } else if (e.key === "Enter") {
+        if (selectedIndex >= 0 && selectedIndex < items.length) {
+          e.preventDefault();
+          onItemSelect?.(items[selectedIndex], selectedIndex);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [items, selectedIndex, onItemSelect, enableArrowNavigation]);
+
+  // When keyboard navigation moves selection, keep it visible
+  useEffect(() => {
+    if (!keyboardNav || selectedIndex < 0 || !listRef.current) return;
+
+    const container = listRef.current;
+    const selectedItem = container.querySelector(`[data-index="${selectedIndex}"]`);
+    if (selectedItem) {
+      const extraMargin = 50;
+      const containerScrollTop = container.scrollTop;
+      const containerHeight = container.clientHeight;
+      const itemTop = selectedItem.offsetTop;
+      const itemBottom = itemTop + selectedItem.offsetHeight;
+
+      if (itemTop < containerScrollTop + extraMargin) {
+        container.scrollTo({ top: itemTop - extraMargin, behavior: "smooth" });
+      } else if (itemBottom > containerScrollTop + containerHeight - extraMargin) {
+        container.scrollTo({ top: itemBottom - containerHeight + extraMargin, behavior: "smooth" });
+      }
+    }
+    setKeyboardNav(false);
+  }, [selectedIndex, keyboardNav]);
+
+  return (
+    <div className={`relative ${className}`}>
+      <div
+        ref={listRef}
+        className={[
+          "h-[78vh] overflow-y-auto",
+          displayScrollbar
+            ? "[&::-webkit-scrollbar]:w-[8px] [&::-webkit-scrollbar-track]:bg-white [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-[10px]"
+            : "scrollbar-hide",
+        ].join(" ")}
+        onScroll={handleScroll}
+        style={{
+          scrollbarWidth: displayScrollbar ? "thin" : "none",
+          scrollbarColor: displayScrollbar ? "#e2e8f0 #ffffff" : undefined,
+        }}
+      >
+        <div className="divide-y divide-slate-100">
+          {items.map((x, index) => {
+            const active = x.id === selectedId;
+            const hoverSelected = selectedIndex === index;
+
+            return (
+              <AnimatedItem
+                key={x.id}
+                delay={0.03}
+                index={index}
+                onMouseEnter={() => handleItemMouseEnter(index)}
+                onClick={() => handleItemClick(x, index)}
+              >
+                {/* keep your EXACT card UI */}
+                <button
+                  className={[
+                    "w-full text-left px-4 py-3 transition flex gap-3",
+                    active ? "bg-slate-50" : "bg-white hover:bg-slate-50/70",
+                    // subtle keyboard highlight (doesn't change overall design)
+                    !active && hoverSelected ? "ring-1 ring-slate-200" : "",
+                  ].join(" ")}
+                  type="button"
+                >
+                  <Avatar label={x.displayName} />
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="text-sm font-black text-slate-900 truncate">{x.displayName}</div>
+                          {x.anonymous ? <Badge tone="anon">Anonymous</Badge> : null}
+                          {!x.read ? <Badge tone="unread">Unread</Badge> : null}
+                        </div>
+                        <div className="mt-0.5 text-[12px] font-bold text-slate-500 truncate">{x.topic}</div>
+                      </div>
+                      <div className="text-[11px] font-bold text-slate-400 whitespace-nowrap">{x.lastSeen}</div>
+                    </div>
+
+                    <div className="mt-1 text-[13px] font-semibold text-slate-600 truncate">{x.lastMessage}</div>
+                  </div>
+                </button>
+              </AnimatedItem>
+            );
+          })}
+        </div>
+      </div>
+
+      {showGradients ? (
+        <>
+          <div
+            className="absolute top-0 left-0 right-0 h-[44px] bg-gradient-to-b from-white to-transparent pointer-events-none transition-opacity duration-300 ease"
+            style={{ opacity: topGradientOpacity }}
+          />
+          <div
+            className="absolute bottom-0 left-0 right-0 h-[90px] bg-gradient-to-t from-white to-transparent pointer-events-none transition-opacity duration-300 ease"
+            style={{ opacity: bottomGradientOpacity }}
+          />
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -263,7 +494,7 @@ function ChatBubble({ by, text, at }) {
       <div className={["max-w-[78%] space-y-1", isCounselor ? "items-end" : "items-start"].join(" ")}>
         <div
           className={[
-            "px-3.5 py-2.5 rounded-2xl text-sm font-semibold leading-relaxed whitespace-pre-wrap break-words border",
+            "px-3.5 py-2.5 rounded-2xl text-sm font-semibold leading-relaxed whitespace-pre-wrap break-words border shadow-[0_1px_0_rgba(0,0,0,0.03)]",
             isCounselor
               ? "bg-slate-900 text-white border-slate-900 rounded-br-md"
               : "bg-white text-slate-800 border-slate-200 rounded-bl-md",
@@ -281,6 +512,7 @@ function ChatBubble({ by, text, at }) {
 
 /* -----------------------------
    Mood Tracker (enhanced)
+   (unchanged - keep your current implementation)
 ----------------------------- */
 function MoodTracker({ moodTracking, day, onPickDay }) {
   const entries = safeArray(moodTracking?.entries).filter((e) => e?.date);
@@ -301,8 +533,7 @@ function MoodTracker({ moodTracking, day, onPickDay }) {
 
   return (
     <div className="space-y-3">
-      {/* Control row */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 flex items-center justify-between gap-3 flex-wrap">
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 flex items-center justify-between gap-3 flex-wrap shadow-[0_1px_0_rgba(0,0,0,0.03)]">
         <div>
           <div className="text-sm font-black text-slate-900">Mood Tracker</div>
           <div className="mt-1 text-xs font-bold text-slate-500">Mood • Reason • Coping (single) • Trends</div>
@@ -315,57 +546,8 @@ function MoodTracker({ moodTracking, day, onPickDay }) {
         />
       </div>
 
-      {/* Snapshot + trends */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div>
-              <div className="text-sm font-black text-slate-900">Day Snapshot</div>
-              <div className="mt-1 text-xs font-bold text-slate-500">
-                Selected: <span className="font-extrabold text-slate-700">{day}</span>
-              </div>
-            </div>
-            {found ? <Badge>Mood: {found.mood}</Badge> : <Badge>—</Badge>}
-          </div>
-
-          {!found ? (
-            <div className="mt-3 text-sm font-semibold text-slate-500">No entry for this date.</div>
-          ) : (
-            <div className="mt-3 space-y-3">
-              <div className="flex flex-wrap gap-2">
-                <Badge>Reason: {found.reason}</Badge>
-                <Badge>Coping: {found.coping}</Badge>
-              </div>
-
-              {/* Quick pick from recent dates */}
-              <div className="pt-2 border-t border-slate-200">
-                <div className="text-xs font-extrabold text-slate-700">Recent days</div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {sorted
-                    .slice(-8)
-                    .reverse()
-                    .map((e) => (
-                      <button
-                        key={`${e.date}-${e.mood}`}
-                        onClick={() => onPickDay(e.date)}
-                        className={[
-                          "px-3 py-1.5 rounded-xl text-xs font-extrabold border transition",
-                          e.date === day
-                            ? "bg-slate-900 text-white border-slate-900"
-                            : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
-                        ].join(" ")}
-                        type="button"
-                      >
-                        {e.date.slice(5)} • {e.mood}
-                      </button>
-                    ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3 shadow-[0_1px_0_rgba(0,0,0,0.03)]">
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div>
               <div className="text-sm font-black text-slate-900">Regression Trend</div>
@@ -405,203 +587,143 @@ function MoodTracker({ moodTracking, day, onPickDay }) {
             </div>
           </div>
 
-          <div className="text-[11px] font-bold text-slate-500">
-            Score mapping: Happy/Calm high • Angry/Sad/Disgust low
+          <div className="text-[11px] font-bold text-slate-500">Score mapping: Happy/Calm high • Angry/Sad/Disgust low</div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_1px_0_rgba(0,0,0,0.03)]">
+        <div className="text-sm font-black text-slate-900">History</div>
+
+        <div
+          className={[
+            "mt-2 max-h-[320px] overflow-y-auto rounded-xl border border-slate-200 bg-white",
+            "[&::-webkit-scrollbar]:w-[8px] [&::-webkit-scrollbar-track]:bg-white [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-[10px]",
+          ].join(" ")}
+          style={{ scrollbarWidth: "thin", scrollbarColor: "#e2e8f0 #ffffff" }}
+        >
+          {/* header row (table-like) */}
+        <div className="sticky top-0 z-10 bg-white border-b border-slate-200">
+          {/* desktop header */}
+          <div className="hidden sm:grid grid-cols-[140px_110px_minmax(160px,1fr)_minmax(160px,1fr)] gap-3 px-3 py-2 text-[11px] font-extrabold text-slate-500">
+            <div>Date</div>
+            <div>Mood</div>
+            <div>Reason</div>
+            <div>Coping</div>
+          </div>
+
+          {/* mobile header */}
+          <div className="sm:hidden px-3 py-2 text-[11px] font-extrabold text-slate-500">
+            Entries
+          </div>
+        </div>
+
+
+          {/* body */}
+          <div className="divide-y divide-slate-100">
+            {sorted.length === 0 ? (
+              <div className="px-3 py-3 text-sm font-semibold text-slate-500">No mood entries.</div>
+            ) : (
+              sorted
+                .slice()
+                .reverse()
+                .map((e, index) => (
+                  <AnimatedRow key={`${e.date}-${e.mood}-${index}`} index={index} delay={0.02}>
+                    {/* desktop/tablet row */}
+                    <div className="hidden sm:grid grid-cols-[140px_110px_minmax(160px,1fr)_minmax(160px,1fr)] gap-3 px-3 py-2 text-sm font-semibold text-slate-700">
+                      <div className="whitespace-nowrap">
+                        <button
+                          onClick={() => onPickDay(e.date)}
+                          className="font-extrabold text-slate-900 hover:underline"
+                          type="button"
+                        >
+                          {e.date}
+                        </button>
+                      </div>
+                      <div className="whitespace-nowrap">{e.mood}</div>
+
+                      {/* ✅ do NOT truncate; allow wrap */}
+                      <div className="min-w-0 whitespace-normal break-words">{e.reason}</div>
+                      <div className="min-w-0 whitespace-normal break-words">{e.coping}</div>
+                    </div>
+
+                    {/* mobile row */}
+                    <div className="sm:hidden px-3 py-3 text-sm font-semibold text-slate-700 space-y-1.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <button
+                          onClick={() => onPickDay(e.date)}
+                          className="font-extrabold text-slate-900 hover:underline"
+                          type="button"
+                        >
+                          {e.date}
+                        </button>
+                        <span className="text-xs font-extrabold text-slate-600">{e.mood}</span>
+                      </div>
+
+                      <div className="text-[12px] font-bold text-slate-500">
+                        Reason: <span className="font-semibold text-slate-700 break-words">{e.reason}</span>
+                      </div>
+                      <div className="text-[12px] font-bold text-slate-500">
+                        Coping: <span className="font-semibold text-slate-700 break-words">{e.coping}</span>
+                      </div>
+                    </div>
+                  </AnimatedRow>
+                ))
+              )}
           </div>
         </div>
       </div>
 
-      {/* Compact history */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-4">
-        <div className="text-sm font-black text-slate-900">History</div>
-        <div className="mt-2 overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="text-[11px] font-extrabold text-slate-500 border-b border-slate-200">
-                <th className="py-2 pr-3">Date</th>
-                <th className="py-2 pr-3">Mood</th>
-                <th className="py-2 pr-3">Reason</th>
-                <th className="py-2 pr-3">Coping</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {sorted
-                .slice()
-                .reverse()
-                .map((e) => (
-                  <tr key={`${e.date}-${e.mood}`} className="text-sm font-semibold text-slate-700">
-                    <td className="py-2 pr-3 whitespace-nowrap">
-                      <button
-                        onClick={() => onPickDay(e.date)}
-                        className="font-extrabold text-slate-900 hover:underline"
-                        type="button"
-                      >
-                        {e.date}
-                      </button>
-                    </td>
-                    <td className="py-2 pr-3 whitespace-nowrap">{e.mood}</td>
-                    <td className="py-2 pr-3 whitespace-nowrap">{e.reason}</td>
-                    <td className="py-2 pr-3 whitespace-nowrap">{e.coping}</td>
-                  </tr>
-                ))}
-              {sorted.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="py-3 text-sm font-semibold text-slate-500">
-                    No mood entries.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   );
 }
 
-/* -----------------------------
-   Main component
------------------------------ */
-export default function Inbox() {
-  const today = useMemo(() => ymd(new Date()), []);
-  const seeded = useMemo(() => buildMockParticipants(50), []);
-  const [items, setItems] = useState(seeded);
-
-  const [selectedId, setSelectedId] = useState(items?.[0]?.id || "");
-  const [tab, setTab] = useState("chat"); // chat | mood
-  const [search, setSearch] = useState("");
-  const [filterUnread, setFilterUnread] = useState(false);
-
-  const [day, setDay] = useState(today);
-  const [draft, setDraft] = useState("");
-
-  const list = useMemo(() => {
-    let base = items;
-    if (filterUnread) base = base.filter((x) => !x.read);
-
-    const q = search.trim().toLowerCase();
-    if (!q) return base;
-
-    return base.filter((x) => {
-      const name = (x.displayName || "").toLowerCase();
-      const topic = (x.topic || "").toLowerCase();
-      const msg = (x.lastMessage || "").toLowerCase();
-      return name.includes(q) || topic.includes(q) || msg.includes(q);
-    });
-  }, [items, filterUnread, search]);
-
-  const selected = useMemo(() => items.find((x) => x.id === selectedId) || null, [items, selectedId]);
-
-  const chatScrollRef = useRef(null);
-
-  useEffect(() => {
-    if (!chatScrollRef.current) return;
-    chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-  }, [selectedId, selected?.thread?.length, tab]);
-
-  const markRead = (id) => setItems((prev) => prev.map((x) => (x.id === id ? { ...x, read: true } : x)));
-
-  const selectChat = (id) => {
-    setSelectedId(id);
-    markRead(id);
-    setTab("chat");
-    setDay(today);
-    setDraft("");
-  };
-
-  const send = () => {
-    if (!selected) return;
-    const text = draft.trim();
-    if (!text) return;
-
-    const now = new Date();
-    const at = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
-
-    const next = {
-      ...selected,
-      thread: [...safeArray(selected.thread), { id: `${selected.id}-c-${Date.now()}`, by: "Counselor", at, text }],
-      lastMessage: text,
-    };
-
-    setItems((prev) => prev.map((x) => (x.id === selected.id ? next : x)));
-    setDraft("");
-  };
-
-  const moodDisabled = !!selected?.anonymous;
+function AnimatedRow({ children, index, delay = 0.02 }) {
+  const ref = useRef(null);
+  const inView = useInView(ref, { amount: 0.35, once: false });
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4">
-      {/* LEFT: Messenger-like list */}
-      <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-200 bg-white space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-sm font-black text-slate-900">Student List</div>
-            <button
-              onClick={() => setFilterUnread((v) => !v)}
-              className={[
-                "px-3 py-2 rounded-xl text-sm font-extrabold transition border",
-                filterUnread ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
-              ].join(" ")}
-              type="button"
-            >
-              Unread
-            </button>
-          </div>
+    <motion.div
+      ref={ref}
+      data-index={index}
+      initial={{ scale: 0.98, opacity: 0 }}
+      animate={inView ? { scale: 1, opacity: 1 } : { scale: 0.98, opacity: 0 }}
+      transition={{ duration: 0.18, delay }}
+      className="cursor-default"
+      style={{ willChange: "transform, opacity" }}
+    >
+      {children}
+    </motion.div>
+  );
+}
 
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search…"
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:ring-4 focus:ring-slate-100"
-          />
-        </div>
 
-        <div className="h-[78vh] overflow-y-auto">
-          {list.length === 0 ? (
-            <div className="px-4 py-6 text-sm font-semibold text-slate-500">No results.</div>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {list.map((x) => {
-                const active = x.id === selectedId;
-                return (
-                  <button
-                    key={x.id}
-                    onClick={() => selectChat(x.id)}
-                    className={[
-                      "w-full text-left px-4 py-3 transition flex gap-3",
-                      active ? "bg-slate-50" : "bg-white hover:bg-slate-50/70",
-                    ].join(" ")}
-                    type="button"
-                  >
-                    <Avatar label={x.displayName} />
+/* -----------------------------
+   Conversation Pane (reused)
+----------------------------- */
+function ConversationPane({
+  selected,
+  tab,
+  setTab,
+  moodDisabled,
+  day,
+  setDay,
+  draft,
+  setDraft,
+  send,
+  chatScrollRef,
+  onBack,
+  showBack,
+  isMobileAnimated,
+}) {
+  const reduceMotion = useReducedMotion();
+  const swipeThreshold = 90;
 
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <div className="text-sm font-black text-slate-900 truncate">{x.displayName}</div>
-                            {x.anonymous ? <Badge tone="anon">Anonymous</Badge> : null}
-                            {!x.read ? <Badge tone="unread">Unread</Badge> : null}
-                          </div>
-                          <div className="mt-0.5 text-[12px] font-bold text-slate-500 truncate">{x.topic}</div>
-                        </div>
-                        <div className="text-[11px] font-bold text-slate-400 whitespace-nowrap">{x.lastSeen}</div>
-                      </div>
-
-                      <div className="mt-1 text-[13px] font-semibold text-slate-600 truncate">{x.lastMessage}</div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* RIGHT: Messenger-like conversation */}
-      <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-        {/* Header */}
-        <div className="px-4 py-3 border-b border-slate-200 bg-white flex items-center justify-between gap-3 flex-wrap">
+  const pane = (
+    <>
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-slate-200 bg-white space-y-3">
+        {/* Row 1 */}
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             {selected ? <Avatar label={selected.displayName} /> : <Avatar label="—" />}
             <div className="min-w-0">
@@ -619,81 +741,307 @@ export default function Inbox() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Tab active={tab === "chat"} onClick={() => setTab("chat")}>
-              Messages
-            </Tab>
-            <Tab active={tab === "mood"} disabled={moodDisabled} onClick={() => setTab("mood")}>
-              Mood Tracker
-            </Tab>
-          </div>
+          {showBack ? (
+            <button
+              onClick={onBack}
+              className="px-3 py-2 rounded-xl text-sm font-extrabold transition border bg-white text-slate-700 border-slate-200 hover:bg-slate-50 shrink-0"
+              type="button"
+            >
+              Back
+            </button>
+          ) : null}
         </div>
 
-        {!selected ? (
-          <div className="px-4 py-8 text-sm font-semibold text-slate-500">Pick a student from the left.</div>
-        ) : (
-          <>
-            {tab === "chat" ? (
-              <div className="h-[78vh] flex flex-col">
-                {/* Scroll area */}
-                <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto bg-slate-50 px-4 py-4 space-y-3">
-                  <div className="flex justify-center">
-                    <span className="text-[11px] font-bold text-slate-400 bg-white border border-slate-200 px-3 py-1 rounded-full">
-                      {selected.read ? "Seen" : "Delivered"} • {selected.lastSeen}
-                    </span>
-                  </div>
+        {/* Row 2 */}
+        <div className="flex items-center justify-center gap-2">
+          <Tab active={tab === "chat"} onClick={() => setTab("chat")}>
+            Messages
+          </Tab>
+          <Tab active={tab === "mood"} disabled={moodDisabled} onClick={() => setTab("mood")}>
+            Mood Tracker
+          </Tab>
+        </div>
+      </div>
 
-                  {safeArray(selected.thread).map((m) => (
-                    <ChatBubble key={m.id} by={m.by} text={m.text} at={m.at} />
-                  ))}
+      {!selected ? (
+        <div className="px-4 py-8 text-sm font-semibold text-slate-500">Pick a student from the left.</div>
+      ) : (
+        <>
+          {tab === "chat" ? (
+            <div className="h-[78vh] flex flex-col">
+              <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-y-auto bg-slate-50 px-4 py-4 space-y-3">
+                <div className="flex justify-center">
+                  <span className="text-[11px] font-bold text-slate-400 bg-white border border-slate-200 px-3 py-1 rounded-full shadow-[0_1px_0_rgba(0,0,0,0.03)]">
+                    {selected.read ? "Seen" : "Delivered"} • {selected.lastSeen}
+                  </span>
                 </div>
 
-                {/* Sticky composer */}
-                <div className="border-t border-slate-200 bg-white px-4 py-3">
-                  <div className="flex items-end gap-2">
-                    <textarea
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      rows={1}
-                      placeholder="Type a message…"
-                      className="flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          send();
-                        }
-                      }}
-                    />
-                    <button
-                      onClick={send}
-                      className="px-4 py-3 rounded-2xl text-sm font-extrabold bg-slate-900 text-white hover:bg-slate-800"
-                      type="button"
-                    >
-                      Send
-                    </button>
-                  </div>
-                  <div className="mt-1 text-[11px] font-bold text-slate-400">Enter = send • Shift+Enter = new line</div>
-                </div>
+                {safeArray(selected.thread).map((m) => (
+                  <ChatBubble key={m.id} by={m.by} text={m.text} at={m.at} />
+                ))}
               </div>
-            ) : null}
 
-            {tab === "mood" ? (
-              <div className="h-[78vh] overflow-y-auto bg-slate-50 p-4">
-                {selected.anonymous ? (
-                  <div className="rounded-2xl border border-slate-200 bg-white p-6">
-                    <div className="text-sm font-black text-slate-900">Mood Tracker locked</div>
-                    <div className="mt-2 text-sm font-semibold text-slate-600">
-                      This participant is anonymous, so mood history is not available.
-                    </div>
-                  </div>
-                ) : (
-                  <MoodTracker moodTracking={selected.moodTracking} day={day} onPickDay={setDay} />
-                )}
+              <div className="border-t border-slate-200 bg-white px-4 py-3">
+                <div className="flex items-end gap-2">
+                  <textarea
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    rows={1}
+                    placeholder="Type a message…"
+                    className="flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        send();
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={send}
+                    className="px-4 py-3 rounded-2xl text-sm font-extrabold bg-slate-900 text-white hover:bg-slate-800 shadow-sm"
+                    type="button"
+                  >
+                    Send
+                  </button>
+                </div>
+                <div className="mt-1 text-[11px] font-bold text-slate-400">Enter = send • Shift+Enter = new line</div>
               </div>
-            ) : null}
-          </>
-        )}
-      </section>
+            </div>
+          ) : null}
+
+          {tab === "mood" ? (
+            <div className="h-[78vh] overflow-y-auto bg-slate-50 p-4">
+              {selected.anonymous ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_1px_0_rgba(0,0,0,0.03)]">
+                  <div className="text-sm font-black text-slate-900">Mood Tracker locked</div>
+                  <div className="mt-2 text-sm font-semibold text-slate-600">
+                    This participant is anonymous, so mood history is not available.
+                  </div>
+                </div>
+              ) : (
+                <MoodTracker moodTracking={selected.moodTracking} day={day} onPickDay={setDay} />
+              )}
+            </div>
+          ) : null}
+        </>
+      )}
+    </>
+  );
+
+  if (!isMobileAnimated) {
+    return <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">{pane}</section>;
+  }
+
+  return (
+    <motion.section
+      className="rounded-2xl border border-slate-200 bg-white overflow-hidden"
+      initial={reduceMotion ? false : { x: 40, opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={reduceMotion ? { opacity: 0 } : { x: 60, opacity: 0 }}
+      transition={{ duration: reduceMotion ? 0 : 0.18, ease: "easeOut" }}
+      drag="x"
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.2}
+      onDragEnd={(_, info) => {
+        const goBack = info.offset.x > swipeThreshold || (info.velocity.x > 900 && info.offset.x > 30);
+        if (goBack) onBack?.();
+      }}
+      style={{ touchAction: "pan-y" }}
+    >
+      {pane}
+    </motion.section>
+  );
+}
+
+/* -----------------------------
+   Main component
+----------------------------- */
+export default function Inbox() {
+  const today = useMemo(() => ymd(new Date()), []);
+  const seeded = useMemo(() => buildMockParticipants(50), []);
+  const [items, setItems] = useState(seeded);
+  const [scrollKey, setScrollKey] = useState(0);
+  const [selectedId, setSelectedId] = useState(items?.[0]?.id || "");
+  const [tab, setTab] = useState("chat"); // chat | mood
+  const [search, setSearch] = useState("");
+  const [filterUnread, setFilterUnread] = useState(false);
+
+  const [day, setDay] = useState(today);
+  const [draft, setDraft] = useState("");
+
+  const [showConversation, setShowConversation] = useState(false);
+
+  const list = useMemo(() => {
+    let base = items;
+    if (filterUnread) base = base.filter((x) => !x.read);
+
+    const q = search.trim().toLowerCase();
+    if (!q) return base;
+
+    return base.filter((x) => {
+      const name = (x.displayName || "").toLowerCase();
+      const topic = (x.topic || "").toLowerCase();
+      const msg = (x.lastMessage || "").toLowerCase();
+      return name.includes(q) || topic.includes(q) || msg.includes(q);
+    });
+  }, [items, filterUnread, search]);
+
+  const selected = useMemo(() => items.find((x) => x.id === selectedId) || null, [items, selectedId]);
+  const moodDisabled = !!selected?.anonymous;
+
+  const chatScrollRef = useRef(null);
+
+  useEffect(() => {
+    if (!selected) return;
+    if (tab !== "chat") return;
+
+    // On mobile, conversation isn't mounted until showConversation === true
+    if (!showConversation && window.innerWidth < 1024) return;
+
+    scrollToBottomAfterPaint(chatScrollRef, 60);
+  }, [selected?.id, tab, selected?.thread?.length, scrollKey, showConversation]);
+
+
+
+  const markRead = (id) => setItems((prev) => prev.map((x) => (x.id === id ? { ...x, read: true } : x)));
+
+  const selectChat = (id) => {
+    setSelectedId(id);
+    markRead(id);
+    setTab("chat");
+    setDay(today);
+    setDraft("");
+
+    setShowConversation(true);
+
+    requestAnimationFrame(() => setScrollKey((k) => k + 1));
+  };
+
+
+  const send = () => {
+    if (!selected) return;
+    const text = draft.trim();
+    if (!text) return;
+
+    const now = new Date();
+    const at = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+
+    const next = {
+      ...selected,
+      thread: [...safeArray(selected.thread), { id: `${selected.id}-c-${Date.now()}`, by: "Counselor", at, text }],
+      lastMessage: text,
+      read: true,
+    };
+
+    setItems((prev) => prev.map((x) => (x.id === selected.id ? next : x)));
+    setDraft("");
+
+    // ✅ force scroll after sending
+    setScrollKey((k) => k + 1);
+  };
+
+
+  const InboxList = (
+    <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+      <div className="px-4 py-3 border-b border-slate-200 bg-white space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-black text-slate-900">Student List</div>
+          <button
+            onClick={() => setFilterUnread((v) => !v)}
+            className={[
+              "px-3 py-2 rounded-xl text-sm font-extrabold transition border",
+              filterUnread ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
+            ].join(" ")}
+            type="button"
+          >
+            Unread
+          </button>
+        </div>
+
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search…"
+          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:ring-4 focus:ring-slate-100"
+        />
+      </div>
+
+      {/* ✅ Template-style animated scroll list */}
+      {list.length === 0 ? (
+        <div className="px-4 py-6 text-sm font-semibold text-slate-500">No results.</div>
+      ) : (
+        <AnimatedInboxList
+          items={list}
+          selectedId={selectedId}
+          onItemSelect={(item) => selectChat(item.id)}
+          showGradients
+          enableArrowNavigation
+          displayScrollbar
+        />
+      )}
+    </section>
+  );
+
+  return (
+    <div style={{ fontFamily: 'Nunito, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial' }}>
+      {/* MOBILE: either list OR conversation */}
+      <div className="lg:hidden">
+        <div className="grid grid-cols-1 gap-4">
+          <AnimatePresence mode="wait" initial={false}>
+            {!showConversation ? (
+              <motion.div
+                key="list"
+                initial={{ x: 0, opacity: 1 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ x: -40, opacity: 0 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+              >
+                {InboxList}
+              </motion.div>
+            ) : (
+              <ConversationPane
+                key="conversation"
+                selected={selected}
+                tab={tab}
+                setTab={setTab}
+                moodDisabled={moodDisabled}
+                day={day}
+                setDay={setDay}
+                draft={draft}
+                setDraft={setDraft}
+                send={send}
+                chatScrollRef={chatScrollRef}
+                showBack
+                onBack={() => setShowConversation(false)}
+                isMobileAnimated
+              />
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+
+      {/* DESKTOP (lg+): keep original two-column layout */}
+      <div className="hidden lg:block">
+        <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4">
+          {InboxList}
+
+          <ConversationPane
+            selected={selected}
+            tab={tab}
+            setTab={setTab}
+            moodDisabled={moodDisabled}
+            day={day}
+            setDay={setDay}
+            draft={draft}
+            setDraft={setDraft}
+            send={send}
+            chatScrollRef={chatScrollRef}
+            showBack={false}
+            onBack={undefined}
+            isMobileAnimated={false}
+          />
+        </div>
+      </div>
     </div>
   );
 }
