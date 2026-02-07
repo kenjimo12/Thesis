@@ -1,6 +1,8 @@
 // src/pages/CounselorDashboard/Sections/Inbox.jsx
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, useInView, useReducedMotion } from "framer-motion";
+import { AnimatePresence, LayoutGroup, motion, useInView, useReducedMotion } from "framer-motion";
+import Lottie from "lottie-react";
+import messageAnim from "../../../assets/lottie/Message.json";
 
 /**
  * Messenger-like UI + Mood Tracker (enhanced)
@@ -19,6 +21,27 @@ import { AnimatePresence, motion, useInView, useReducedMotion } from "framer-mot
    Fixed vocab
 ----------------------------- */
 const MOODS = ["Happy", "Calm", "Okay", "Stressed", "Sad", "Angry", "Fear", "Surprise", "Disgust"];
+const MOOD_EMOJI = {
+  Happy: "😄",
+  Calm: "😌",
+  Okay: "🙂",
+  Stressed: "😣",
+  Sad: "😢",
+  Angry: "😠",
+  Fear: "😨",
+  Surprise: "😮",
+  Disgust: "🤢",
+};
+
+function MoodLabel({ mood }) {
+  const emo = MOOD_EMOJI[mood] || "•";
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="text-base leading-none" aria-hidden="true">{emo}</span>
+      <span className="whitespace-nowrap">{mood}</span>
+    </span>
+  );
+}
 const REASONS = ["School", "Family", "Friends", "Health", "Other"];
 const COPING_OPTIONS = [
   "Deep breathing",
@@ -487,28 +510,39 @@ function AnimatedInboxList({
 /* -----------------------------
    Messenger-like chat area
 ----------------------------- */
-function ChatBubble({ by, text, at }) {
+function ChatBubble({ by, text }) {
   const isCounselor = by === "Counselor";
+
   return (
-    <div className={["flex", isCounselor ? "justify-end" : "justify-start"].join(" ")}>
-      <div className={["max-w-[78%] space-y-1", isCounselor ? "items-end" : "items-start"].join(" ")}>
-        <div
-          className={[
-            "px-3.5 py-2.5 rounded-2xl text-sm font-semibold leading-relaxed whitespace-pre-wrap break-words border shadow-[0_1px_0_rgba(0,0,0,0.03)]",
-            isCounselor
-              ? "bg-slate-900 text-white border-slate-900 rounded-br-md"
-              : "bg-white text-slate-800 border-slate-200 rounded-bl-md",
-          ].join(" ")}
-        >
+    <div className={["flex items-start gap-2.5", isCounselor ? "justify-end" : "justify-start"].join(" ")}>
+      {/* Avatar only for student/participant */}
+      {!isCounselor ? (
+        <div className="shrink-0">
+          <Avatar label="Student" />
+        </div>
+      ) : null}
+
+      <div
+        className={[
+          "flex flex-col w-full",
+          "max-w-[88%] sm:max-w-[420px] lg:max-w-[520px]",
+          "leading-1.5 p-4 border shadow-[0_1px_0_rgba(0,0,0,0.03)]",
+          isCounselor ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-800 border-slate-200",
+          isCounselor ? "rounded-s-2xl rounded-tr-2xl rounded-br-md" : "rounded-e-2xl rounded-tl-2xl rounded-bl-md",
+        ].join(" ")}
+      >
+        <p className={["text-sm whitespace-pre-wrap break-words", isCounselor ? "text-white" : "text-slate-700"].join(" ")}>
           {text}
-        </div>
-        <div className={["text-[11px] font-bold text-slate-400", isCounselor ? "text-right" : "text-left"].join(" ")}>
-          {at}
-        </div>
+        </p>
+
+        <span className={["mt-2 text-[11px] font-bold", isCounselor ? "text-right text-white/70" : "text-left text-slate-400"].join(" ")}>
+          {isCounselor ? "Delivered" : "Seen"}
+        </span>
       </div>
     </div>
   );
 }
+
 
 /* -----------------------------
    Mood Tracker (enhanced)
@@ -639,10 +673,16 @@ function MoodTracker({ moodTracking, day, onPickDay }) {
                           {e.date}
                         </button>
                       </div>
-                      <div className="whitespace-nowrap">{e.mood}</div>
+                      <div className="whitespace-nowrap">
+                        <MoodLabel mood={e.mood} />
+                      </div>
 
                       {/* ✅ do NOT truncate; allow wrap */}
-                      <div className="min-w-0 whitespace-normal break-words">{e.reason}</div>
+                      <div className="min-w-0">
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-[15px] border border-slate-200 bg-slate-50 text-[12px] font-extrabold text-slate-700">
+                          {e.reason}
+                        </span>
+                      </div>
                       <div className="min-w-0 whitespace-normal break-words">{e.coping}</div>
                     </div>
 
@@ -660,7 +700,10 @@ function MoodTracker({ moodTracking, day, onPickDay }) {
                       </div>
 
                       <div className="text-[12px] font-bold text-slate-500">
-                        Reason: <span className="font-semibold text-slate-700 break-words">{e.reason}</span>
+                        Reason:{" "}
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-[15px] border border-slate-200 bg-slate-50 text-[12px] font-extrabold text-slate-700">
+                          {e.reason}
+                        </span>
                       </div>
                       <div className="text-[12px] font-bold text-slate-500">
                         Coping: <span className="font-semibold text-slate-700 break-words">{e.coping}</span>
@@ -723,44 +766,127 @@ function ConversationPane({
       {/* Header */}
       <div className="px-4 py-3 border-b border-slate-200 bg-white space-y-3">
         {/* Row 1 */}
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            {selected ? <Avatar label={selected.displayName} /> : <Avatar label="—" />}
-            <div className="min-w-0">
-              <div className="text-sm font-black text-slate-900 truncate">{selected?.displayName || "Select a chat"}</div>
-              <div className="text-[12px] font-bold text-slate-500 truncate">
-                {selected ? (
-                  <>
-                    {selected.topic}
-                    {selected.anonymous ? " • Anonymous Participant" : ""}
-                  </>
-                ) : (
-                  "—"
-                )}
+{/* Row 1 */}
+<div className="flex items-center justify-between gap-3">
+  {/* Left: avatar + labels */}
+  <div className="flex items-center gap-3 min-w-0">
+    {selected ? <Avatar label={selected.displayName} /> : <Avatar label="—" />}
+
+    <div className="min-w-0">
+      <div className="text-sm font-black text-slate-900 truncate">
+        {selected?.displayName || "Select a conversation"}
+      </div>
+      <div className="text-[12px] font-bold text-slate-500 truncate">
+        {selected ? (
+          <>
+            {selected.topic}
+            {selected.anonymous ? " • Anonymous Participant" : ""}
+          </>
+        ) : (
+          "Choose a student from the list"
+        )}
+      </div>
+    </div>
+  </div>
+
+  {/* Right: Mobile back OR Desktop close */}
+  <div className="flex items-center gap-2 shrink-0">
+    {showBack ? (
+      <button
+        onClick={onBack}
+        className={[
+          "h-10 w-10 grid place-items-center",
+          "rounded-[10px] border border-slate-200 bg-white text-slate-700",
+          "hover:bg-slate-50 transition shrink-0",
+          "focus:outline-none focus:ring-4 focus:ring-slate-100",
+        ].join(" ")}
+        type="button"
+        aria-label="Back"
+        title="Back"
+      >
+        <IconBack className="w-5 h-5" />
+      </button>
+    ) : (
+      <button
+        onClick={onBack}
+        className={[
+          "h-10 px-3 inline-flex items-center gap-2",
+          "rounded-[10px] border border-slate-200 bg-white text-slate-700",
+          "hover:bg-slate-50 transition",
+          "focus:outline-none focus:ring-4 focus:ring-slate-100",
+        ].join(" ")}
+        type="button"
+        aria-label="Close conversation"
+        title="Close conversation"
+      >
+        <span className="text-sm font-extrabold">Close</span>
+      </button>
+    )}
+  </div>
+</div>
+
+
+        <LayoutGroup id="segmented-tabs">
+          <div className="w-full">
+            <div className="mx-auto w-full max-w-full sm:max-w-[520px] lg:max-w-[560px]">
+              <div className="relative grid grid-cols-2 rounded-[10px] border border-slate-200 bg-white p-1 overflow-hidden">
+                {/* sliding pill */}
+                <motion.div
+                  className="absolute top-1 bottom-1 left-1 rounded-[8px] bg-slate-900 shadow-sm"
+                  initial={false}
+                  animate={{ x: tab === "chat" ? 0 : "calc(100% + 4px)" }}
+                  transition={{ type: "spring", stiffness: 520, damping: 38 }}
+                  style={{ width: "calc(50% - 4px)" }}
+                />
+
+                {/* Messages */}
+                <motion.button
+                  type="button"
+                  onClick={() => setTab("chat")}
+                  whileTap={{ scale: 0.98 }}
+                  className={[
+                    "relative z-10 w-full rounded-full",
+                    "px-2.5 sm:px-4 py-2",
+                    "text-xs sm:text-sm font-extrabold select-none",
+                    "inline-flex items-center justify-center gap-2 min-w-0",
+                    tab === "chat" ? "text-white" : "text-slate-700 hover:text-slate-900",
+                  ].join(" ")}
+                >
+                  <IconChat className="w-4 h-4 sm:w-[18px] sm:h-[18px] shrink-0" />
+                  <span className="truncate">Messages</span>
+                </motion.button>
+
+                {/* Mood */}
+                <motion.button
+                  type="button"
+                  disabled={moodDisabled}
+                  onClick={() => !moodDisabled && setTab("mood")}
+                  whileTap={moodDisabled ? undefined : { scale: 0.98 }}
+                  className={[
+                    "relative z-10 w-full rounded-full",
+                    "px-2.5 sm:px-4 py-2",
+                    "text-xs sm:text-sm font-extrabold select-none",
+                    "inline-flex items-center justify-center gap-2 min-w-0",
+                    moodDisabled
+                      ? "text-slate-400 cursor-not-allowed"
+                      : tab === "mood"
+                      ? "text-white"
+                      : "text-slate-700 hover:text-slate-900",
+                  ].join(" ")}
+                  title={moodDisabled ? "Mood Tracker is not available for anonymous participants" : undefined}
+                >
+                  <IconMood className="w-4 h-4 sm:w-[18px] sm:h-[18px] shrink-0" />
+                  {/* ✅ responsive label without breaking layout */}
+                  <span className="truncate">
+                    <span className="sm:hidden">Mood</span>
+                    <span className="hidden sm:inline">Mood Tracker</span>
+                  </span>
+                </motion.button>
               </div>
             </div>
           </div>
+        </LayoutGroup>
 
-          {showBack ? (
-            <button
-              onClick={onBack}
-              className="px-3 py-2 rounded-xl text-sm font-extrabold transition border bg-white text-slate-700 border-slate-200 hover:bg-slate-50 shrink-0"
-              type="button"
-            >
-              Back
-            </button>
-          ) : null}
-        </div>
-
-        {/* Row 2 */}
-        <div className="flex items-center justify-center gap-2">
-          <Tab active={tab === "chat"} onClick={() => setTab("chat")}>
-            Messages
-          </Tab>
-          <Tab active={tab === "mood"} disabled={moodDisabled} onClick={() => setTab("mood")}>
-            Mood Tracker
-          </Tab>
-        </div>
       </div>
 
       {!selected ? (
@@ -776,9 +902,9 @@ function ConversationPane({
                   </span>
                 </div>
 
-                {safeArray(selected.thread).map((m) => (
-                  <ChatBubble key={m.id} by={m.by} text={m.text} at={m.at} />
-                ))}
+              {safeArray(selected.thread).map((m) => (
+                <ChatBubble key={m.id} by={m.by} text={m.text} />
+              ))}
               </div>
 
               <div className="border-t border-slate-200 bg-white px-4 py-3">
@@ -788,7 +914,7 @@ function ConversationPane({
                     onChange={(e) => setDraft(e.target.value)}
                     rows={1}
                     placeholder="Type a message…"
-                    className="flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
+                    className="flex-1 resize-none rounded-[10px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
@@ -798,7 +924,7 @@ function ConversationPane({
                   />
                   <button
                     onClick={send}
-                    className="px-4 py-3 rounded-2xl text-sm font-extrabold bg-slate-900 text-white hover:bg-slate-800 shadow-sm"
+                    className="px-4 py-3 rounded-[10px] text-sm font-extrabold bg-slate-900 text-white hover:bg-slate-800 shadow-sm"
                     type="button"
                   >
                     Send
@@ -853,11 +979,72 @@ function ConversationPane({
   );
 }
 
+function IconBack({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path
+        d="M15 18l-6-6 6-6"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconChat({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path
+        d="M7.5 18.5 4 20V6.8C4 5.8 4.8 5 5.8 5H18.2C19.2 5 20 5.8 20 6.8V14.2C20 15.2 19.2 16 18.2 16H9.2L7.5 18.5Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      <path
+        d="M7.5 9h9M7.5 12h6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function IconMood({ className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path
+        d="M12 21a9 9 0 1 0-9-9"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M7.8 14.2c1.1 1.3 2.5 2 4.2 2s3.1-.7 4.2-2"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M9 10h.01M15 10h.01"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+
 /* -----------------------------
    Main component
 ----------------------------- */
 export default function Inbox() {
   const today = useMemo(() => ymd(new Date()), []);
+  const [desktopPaneOpen, setDesktopPaneOpen] = useState(true);
   const seeded = useMemo(() => buildMockParticipants(50), []);
   const [items, setItems] = useState(seeded);
   const [scrollKey, setScrollKey] = useState(0);
@@ -870,7 +1057,12 @@ export default function Inbox() {
   const [draft, setDraft] = useState("");
 
   const [showConversation, setShowConversation] = useState(false);
-
+  const closeDesktopConversation = () => {
+    setDesktopPaneOpen(false);
+    setSelectedId("");     // makes the empty-state show “Select a conversation”
+    setTab("chat");
+    setDraft("");
+  };
   const list = useMemo(() => {
     let base = items;
     if (filterUnread) base = base.filter((x) => !x.read);
@@ -913,6 +1105,9 @@ export default function Inbox() {
     setDraft("");
 
     setShowConversation(true);
+
+    // ✅ desktop: ensure pane is open when user selects a chat
+    setDesktopPaneOpen(true);
 
     requestAnimationFrame(() => setScrollKey((k) => k + 1));
   };
@@ -1025,21 +1220,46 @@ export default function Inbox() {
         <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4">
           {InboxList}
 
-          <ConversationPane
-            selected={selected}
-            tab={tab}
-            setTab={setTab}
-            moodDisabled={moodDisabled}
-            day={day}
-            setDay={setDay}
-            draft={draft}
-            setDraft={setDraft}
-            send={send}
-            chatScrollRef={chatScrollRef}
-            showBack={false}
-            onBack={undefined}
-            isMobileAnimated={false}
-          />
+          {desktopPaneOpen ? (
+            <ConversationPane
+              selected={selected}
+              tab={tab}
+              setTab={setTab}
+              moodDisabled={moodDisabled}
+              day={day}
+              setDay={setDay}
+              draft={draft}
+              setDraft={setDraft}
+              send={send}
+              chatScrollRef={chatScrollRef}
+              showBack={false}
+              onBack={closeDesktopConversation}
+              isMobileAnimated={false}
+            />
+          ) : (
+            <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+              <div className="h-[78vh] flex items-center justify-center bg-slate-50 px-6">
+                <div className="text-center max-w-[420px]">
+                  <div className="mx-auto w-[220px] sm:w-[260px]">
+                    <Lottie
+                      animationData={messageAnim}
+                      loop
+                      autoplay
+                      className="w-full h-auto"
+                    />
+                  </div>
+
+                  <div className="mt-4 text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+                    Select a conversation
+                  </div>
+                  <div className="mt-2 text-base sm:text-lg font-semibold text-slate-600">
+                    Choose a student from the list to view messages.
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
         </div>
       </div>
     </div>

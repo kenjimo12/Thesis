@@ -459,7 +459,7 @@ export default function CounselorDashboard() {
             <div className="flex items-end justify-between gap-4 flex-wrap">
               <div>
                 <h1 className="text-2xl lg:text-3xl font-black tracking-tight">
-                  Counselor Dashboard
+                  Counselor Dashboards
                 </h1>
                 <p className="mt-1 text-sm font-bold text-slate-500">
                   {activeLabel}
