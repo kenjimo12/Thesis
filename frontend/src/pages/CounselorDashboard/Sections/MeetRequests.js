@@ -5,6 +5,24 @@ import { useEffect, useMemo, useRef, useState } from "react";
 const STORAGE_KEY = "student_dashboard:meet_requests:v2";
 const SETTINGS_KEY = "student_dashboard:account_settings:v1";
 
+const CALENDAR_SELECTED_DATE_KEY = "counselor_dashboard:calendar_selected_date:v1";
+const MEET_REQUESTS_UPDATED_EVENT = "counselor_dashboard:meet_requests_updated";
+
+function isISODate(s) {
+  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+function syncCalendarSelectedDate(dateISO) {
+  if (!isBrowser()) return;
+  if (!isISODate(dateISO)) return;
+  lsSet(CALENDAR_SELECTED_DATE_KEY, dateISO);
+}
+
+function dispatchMeetRequestsUpdated() {
+  if (!isBrowser()) return;
+  window.dispatchEvent(new Event(MEET_REQUESTS_UPDATED_EVENT));
+}
+
 function safeJSONParse(v, fallback) {
   try {
     return JSON.parse(v) ?? fallback;
@@ -69,6 +87,7 @@ const STATUS = {
   APPROVED: "Approved",
   DISAPPROVED: "Disapproved",
   CANCELED: "Canceled",
+  RESCHEDULED: "Rescheduled",
 };
 
 const SORT = {
@@ -79,6 +98,19 @@ const SORT = {
 };
 
 const MODES = ["Online", "In-person"];
+const SAMPLE_TIMES = ["08:00 AM", "09:00 AM", "10:00 AM", "11:00 AM", "01:00 PM", "02:00 PM", "03:00 PM", "04:00 PM"];
+
+/* ===================== OFFICE LOCATIONS ===================== */
+const OFFICE_LOCATIONS = {
+  "Main Campus": "Guidance Office, Admin Building (2nd Floor)",
+  "Annex Campus": "Guidance Office, Annex Building (1st Floor)",
+};
+
+function getOfficeMeta(counselorCampus, studentCampus) {
+  const campus = String(counselorCampus || studentCampus || "Main Campus");
+  const office = OFFICE_LOCATIONS[campus] || "Guidance Office";
+  return { campus, office };
+}
 
 /* ===================== MOCK SCOPES ===================== */
 const COUNSELOR_SCOPE = { counselorId: "C-001" };
@@ -97,12 +129,7 @@ function getCounselorDirectoryFromSettings(settings, baseCounselors) {
   const base = coerceArray(baseCounselors);
   if (!settings || typeof settings !== "object") return base;
 
-  const rawList = [
-    ...coerceArray(settings.counselors),
-    ...coerceArray(settings.counselorDirectory),
-    ...coerceArray(settings.counselorList),
-  ];
-
+  const rawList = [...coerceArray(settings.counselors), ...coerceArray(settings.counselorDirectory), ...coerceArray(settings.counselorList)];
   const byId = new Map(base.map((c) => [c.counselorId, { ...c }]));
 
   for (const item of rawList) {
@@ -130,11 +157,32 @@ function nowStamp() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function formatStamp12h(stamp) {
+  const s = String(stamp || "").trim();
+  if (!s) return "—";
+  if (/\b(AM|PM)\b/i.test(s)) return s.replace(/\b(am|pm)\b/gi, (x) => x.toUpperCase());
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/);
+  if (!m) return s;
+
+  const yyyy = m[1];
+  const mm = m[2];
+  const dd = m[3];
+  const hh24 = Number(m[4]);
+  const min = m[5];
+
+  const ap = hh24 >= 12 ? "PM" : "AM";
+  let hh12 = hh24 % 12;
+  if (hh12 === 0) hh12 = 12;
+
+  return `${yyyy}-${mm}-${dd} ${String(hh12).padStart(2, "0")}:${min} ${ap}`;
+}
+
 function parseDateKey(dateStr) {
   const s = String(dateStr || "").trim();
   if (!s) return 0;
-  const d = new Date(`${s}T00:00:00`);
-  const t = d.getTime();
+  const [y, m, d] = s.split("-").map((x) => Number(x));
+  if (!y || !m || !d) return 0;
+  const t = Date.UTC(y, m - 1, d);
   return Number.isFinite(t) ? t : 0;
 }
 
@@ -187,47 +235,440 @@ function normalizeCounselor(counselor, counselorDirectory) {
   };
 }
 
+/* ===================== REAL NAME NORMALIZATION ===================== */
+const FIRST_NAMES = [
+  "Andrea",
+  "Bianca",
+  "Carlo",
+  "Daniel",
+  "Elijah",
+  "Faith",
+  "Gabriel",
+  "Hannah",
+  "Ivan",
+  "Jasmine",
+  "Kyle",
+  "Lianne",
+  "Marco",
+  "Nina",
+  "Oscar",
+  "Paolo",
+  "Rafael",
+  "Sofia",
+  "Tristan",
+  "Vanessa",
+  "William",
+  "Xandra",
+  "Yasmin",
+  "Zachary",
+  "Alyssa",
+  "Brandon",
+  "Catherine",
+  "Daryl",
+  "Erika",
+  "Frances",
+  "Gianna",
+  "Harold",
+  "Isabel",
+  "Joshua",
+  "Katrina",
+  "Lorenzo",
+  "Mikaela",
+  "Nathan",
+  "Patricia",
+  "Reinard",
+  "Therese",
+];
+
+const LAST_NAMES = [
+  "Santos",
+  "Reyes",
+  "Cruz",
+  "Garcia",
+  "Mendoza",
+  "Torres",
+  "Flores",
+  "Ramos",
+  "Gonzales",
+  "Aquino",
+  "Navarro",
+  "Dela Cruz",
+  "Castillo",
+  "Villanueva",
+  "Domingo",
+  "Francisco",
+  "Salazar",
+  "Miranda",
+  "Pascual",
+  "Del Rosario",
+  "Bautista",
+  "Rivera",
+  "Perez",
+  "Valdez",
+  "Aguilar",
+  "Serrano",
+  "Morales",
+  "Fernandez",
+  "Vargas",
+  "Lopez",
+];
+
+function isPlaceholderName(name) {
+  const s = String(name || "").trim();
+  if (!s) return true;
+  return /^student(\s+full\s+name)?\s+\d+$/i.test(s);
+}
+
+function stableHash(str) {
+  const s = String(str || "");
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+function stableNameFromStudentId(studentId, fallbackSeed = 0) {
+  const seed = stableHash(studentId || String(fallbackSeed));
+  const fn = FIRST_NAMES[seed % FIRST_NAMES.length];
+  const ln = LAST_NAMES[(seed * 7) % LAST_NAMES.length];
+  return `${fn} ${ln}`;
+}
+
+function normalizeStudent(student, idx) {
+  if (!student || typeof student !== "object") return student;
+  const name = String(student.name || "").trim();
+  if (!name || isPlaceholderName(name)) {
+    const nextName = stableNameFromStudentId(student.studentId, idx);
+    return { ...student, name: nextName };
+  }
+  return student;
+}
+
 function normalizeRequestsWithCounselors(list, counselorDirectory) {
   if (!Array.isArray(list)) return [];
-  return list.map((r) => ({
+  return list.map((r, idx) => ({
     ...r,
     counselor: normalizeCounselor(r.counselor, counselorDirectory),
+    student: normalizeStudent(r.student, idx),
   }));
 }
 
-function buildCancelMailto({ studentEmail, studentName, requestId, date, time, mode, counselorName, cancelNote }) {
-  const email = String(studentEmail || "").trim();
-  if (!email) return "";
-
-  const subject = `Counseling request ${requestId} canceled`;
-  const lines = [
-    `Hello ${studentName || "Student"},`,
-    "",
-    `Your counseling request (${requestId}) has been canceled.`,
-    "",
-    `Schedule: ${date} • ${time} (${mode})`,
-    `Counselor: ${counselorName || "Counselor"}`,
-    "",
-    cancelNote ? `Reason: ${cancelNote}` : "Reason: (not provided)",
-    "",
-    "You may submit a new request with a new schedule.",
-    "",
-    "Thank you.",
-  ];
-
-  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(
-    lines.join("\n")
-  )}`;
+/* ===================== TIME (2 HOURS RULE) ===================== */
+function parseTimeToMinutes(timeStr) {
+  const s = String(timeStr || "").trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!m) return null;
+  let hh = Number(m[1]);
+  const mm = Number(m[2]);
+  const ap = String(m[3]).toUpperCase();
+  if (hh === 12) hh = 0;
+  if (ap === "PM") hh += 12;
+  return hh * 60 + mm;
 }
 
+function toSessionStartMs(dateStr, timeStr) {
+  const [y, mo, d] = String(dateStr || "")
+    .split("-")
+    .map((x) => Number(x));
+  const minutes = parseTimeToMinutes(timeStr);
+  if (!y || !mo || !d || minutes == null) return null;
+  const hh = Math.floor(minutes / 60);
+  const mm = minutes % 60;
+  return new Date(y, mo - 1, d, hh, mm, 0, 0).getTime();
+}
+
+function isTwoHoursBeforeSession(dateStr, timeStr) {
+  const startMs = toSessionStartMs(dateStr, timeStr);
+  if (!startMs) return true;
+  return Date.now() <= startMs - 2 * 60 * 60 * 1000;
+}
+
+/* ===================== EMAIL (GMAIL COMPOSE) ===================== */
+function buildRescheduleEmailContent({
+  studentName,
+  oldDate,
+  oldTime,
+  oldMode,
+  newDate,
+  newTime,
+  newMode,
+  counselorName,
+  counselorCampus,
+  studentCampus,
+}) {
+  const name = String(studentName || "").trim() || "Student";
+  const subject = "Rescheduled Counseling Appointment";
+
+  const { campus, office } = getOfficeMeta(counselorCampus, studentCampus);
+  const isF2F = String(newMode || "").toLowerCase().includes("in-person");
+
+  const lines = [
+    `Hi ${name},`,
+    "I hope you’re doing well.",
+    "",
+    "This is to confirm that your counseling appointment has been rescheduled.",
+    "",
+    "New appointment",
+    `• Date: ${newDate}`,
+    `• Time: ${newTime}`,
+    `• Mode: ${isF2F ? "Face-to-Face (In-person)" : "Online"}`,
+  ];
+
+  if (isF2F) {
+    lines.push(`• Campus: ${campus}`, `• Office: ${office}`, "• Please arrive 5–10 minutes early.");
+  } else {
+    lines.push("• Tip: Please ensure you have a stable internet connection.");
+  }
+
+  lines.push(
+    "",
+    "Previous appointment",
+    `• Date: ${oldDate}`,
+    `• Time: ${oldTime}`,
+    `• Mode: ${String(oldMode || "").toLowerCase().includes("in-person") ? "Face-to-Face (In-person)" : oldMode}`,
+    "",
+    "If this schedule doesn’t work for you, please reply to this email so we can arrange another available time.",
+    "",
+    "Thank you,",
+    counselorName ? `${counselorName}` : "Guidance Counselor",
+    "Guidance & Counseling Office"
+  );
+
+  return { subject, body: lines.join("\n") };
+}
+
+function buildGmailComposeUrl({ to, subject, body }) {
+  const email = String(to || "").trim();
+  if (!email) return "";
+  const qs = new URLSearchParams({
+    view: "cm",
+    fs: "1",
+    to: email,
+    su: subject || "",
+    body: body || "",
+    tf: "1",
+  });
+  return `https://mail.google.com/mail/?${qs.toString()}`;
+}
+
+function buildMailtoUrl({ to, subject, body }) {
+  const email = String(to || "").trim();
+  if (!email) return "";
+  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject || "")}&body=${encodeURIComponent(body || "")}`;
+}
+
+function openGmailComposeOrMailto({ to, subject, body }) {
+  const gmailUrl = buildGmailComposeUrl({ to, subject, body });
+  const mailtoUrl = buildMailtoUrl({ to, subject, body });
+  if (!isBrowser()) return;
+
+  if (gmailUrl) {
+    const win = window.open(gmailUrl, "_blank", "noopener,noreferrer");
+    if (win) return;
+  }
+  if (mailtoUrl) window.location.href = mailtoUrl;
+}
+
+/* ===================== MOBILE SHEET UTIL ===================== */
+function useIsMobileSm() {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    if (!isBrowser()) return;
+    const mql = window.matchMedia("(max-width: 639px)");
+    const update = () => setIsMobile(!!mql.matches);
+    update();
+    if (mql.addEventListener) mql.addEventListener("change", update);
+    else mql.addListener(update);
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener("change", update);
+      else mql.removeListener(update);
+    };
+  }, []);
+
+  return isMobile;
+}
+
+function useBodyScrollLock(locked) {
+  useEffect(() => {
+    if (!locked || !isBrowser()) return;
+
+    const body = document.body;
+    const html = document.documentElement;
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+
+    const prev = {
+      bodyOverflow: body.style.overflow,
+      bodyPosition: body.style.position,
+      bodyTop: body.style.top,
+      bodyLeft: body.style.left,
+      bodyRight: body.style.right,
+      bodyWidth: body.style.width,
+      htmlOverflow: html.style.overflow,
+      htmlOverscroll: html.style.overscrollBehavior,
+    };
+
+    html.style.overscrollBehavior = "none";
+    html.style.overflow = "hidden";
+
+    body.style.overflow = "hidden";
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+
+    return () => {
+      body.style.overflow = prev.bodyOverflow;
+      body.style.position = prev.bodyPosition;
+      body.style.top = prev.bodyTop;
+      body.style.left = prev.bodyLeft;
+      body.style.right = prev.bodyRight;
+      body.style.width = prev.bodyWidth;
+
+      html.style.overflow = prev.htmlOverflow;
+      html.style.overscrollBehavior = prev.htmlOverscroll;
+
+      window.scrollTo(0, scrollY);
+    };
+  }, [locked]);
+}
+
+function useSheetDragClose({ enabled, onClose }) {
+  const isMobile = useIsMobileSm();
+  const active = enabled && isMobile;
+
+  const [dragY, setDragY] = useState(0);
+  const [dragging, setDragging] = useState(false);
+
+  const ref = useRef({
+    pointerId: null,
+    startY: 0,
+    startTime: 0,
+    lastY: 0,
+    lastTime: 0,
+  });
+
+  const thresholdPx = 120;
+  const velocityPxPerSec = 900;
+
+  const reset = () => {
+    setDragging(false);
+    setDragY(0);
+    ref.current.pointerId = null;
+  };
+
+  const onPointerDown = (e) => {
+    if (!active) return;
+    if (typeof e.button === "number" && e.button !== 0) return;
+
+    ref.current.pointerId = e.pointerId;
+    ref.current.startY = e.clientY;
+    ref.current.lastY = e.clientY;
+    ref.current.startTime = performance.now();
+    ref.current.lastTime = ref.current.startTime;
+
+    setDragging(true);
+    setDragY(0);
+
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {
+      // ignore
+    }
+  };
+
+  const onPointerMove = (e) => {
+    if (!active) return;
+    if (!dragging) return;
+    if (ref.current.pointerId !== e.pointerId) return;
+
+    const dy = Math.max(0, e.clientY - ref.current.startY);
+    setDragY(dy);
+
+    ref.current.lastY = e.clientY;
+    ref.current.lastTime = performance.now();
+  };
+
+  const finish = (e) => {
+    if (!active) return;
+    if (!dragging) return;
+    if (ref.current.pointerId !== e.pointerId) return;
+
+    const totalDy = Math.max(0, e.clientY - ref.current.startY);
+    const dt = Math.max(1, ref.current.lastTime - ref.current.startTime);
+    const v = (totalDy / dt) * 1000;
+
+    const shouldClose = totalDy >= thresholdPx || v >= velocityPxPerSec;
+
+    if (shouldClose) {
+      reset();
+      onClose?.();
+      return;
+    }
+
+    reset();
+  };
+
+  const onPointerUp = (e) => finish(e);
+  const onPointerCancel = (e) => finish(e);
+
+  const sheetStyle = active
+    ? {
+        transform: `translateY(${dragY}px)`,
+        transition: dragging ? "none" : "transform 180ms ease-out",
+        willChange: "transform",
+      }
+    : undefined;
+
+  return {
+    sheetStyle,
+    dragHandleProps: active
+      ? {
+          onPointerDown,
+          onPointerMove,
+          onPointerUp,
+          onPointerCancel,
+        }
+      : {},
+  };
+}
+
+/* ===================== AUTO GOOGLE MEET (FRONTEND HOOK) ===================== */
+/**
+ * You need a backend route that creates a Calendar event with conferenceData and returns:
+ *   { meetLink: "https://meet.google.com/..." }
+ */
+async function createGoogleMeetLinkViaApi({ date, time, studentEmail, counselorName, reason }) {
+  const res = await fetch("/api/google-meet", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      date,
+      time,
+      studentEmail,
+      counselorName,
+      reason,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || "Meet API failed");
+  }
+
+  const data = await res.json();
+  const meetLink = String(data?.meetLink || "").trim();
+  if (!meetLink) throw new Error("Meet link missing");
+  return meetLink;
+}
+
+/* ===================== SAMPLE DATA ===================== */
 function longNotes(i) {
   return (
-    `Stress-test notes #${i}\n\n` +
-    "I have been feeling overwhelmed lately with deadlines, expectations, and my own thoughts. ".repeat(18) +
+    `Notes #${i}\n\n` +
+    "I have been feeling overwhelmed lately with deadlines, expectations, and my own thoughts. ".repeat(10) +
     "\n\n" +
-    "Sometimes it affects my sleep and appetite. I also struggle to focus during classes and feel anxious before exams. ".repeat(
-      14
-    ) +
+    "Sometimes it affects my sleep and appetite. I also struggle to focus during classes and feel anxious before exams. ".repeat(8) +
     "\n\n" +
     "I would like guidance and coping strategies. Thank you."
   );
@@ -235,32 +676,17 @@ function longNotes(i) {
 
 function makeStudent(i) {
   const courses = COURSE_OPTIONS[i % COURSE_OPTIONS.length];
+  const studentId = `2023-${String(88000 + i).padStart(6, "0")}`;
   return {
-    studentId: `2023-${String(88000 + i).padStart(6, "0")}`,
-    name: `Student Full Name ${i}`, // ✅ show "Full Name" in list, not "Student 16"
+    studentId,
+    name: stableNameFromStudentId(studentId, i),
     email: `student${i}@gmail.com`,
     campus: i % 2 === 0 ? "Main Campus" : "Annex Campus",
     courses,
   };
 }
 
-/* ===================== SAMPLE DATA (20 TOTAL: 5 EACH STATUS) ===================== */
-const SAMPLE_TIMES = ["08:00 AM", "09:00 AM", "10:00 AM", "11:00 AM", "01:00 PM", "02:00 PM", "03:00 PM", "04:00 PM"]; // no 12nn
-function makeReq({
-  id,
-  status,
-  createdAt,
-  date,
-  time,
-  mode,
-  reason,
-  notes,
-  counselor,
-  student,
-  meetLink,
-  canceledAt,
-  cancelNote,
-}) {
+function makeReq({ id, status, createdAt, date, time, mode, reason, notes, counselor, student, meetLink, canceledAt, cancelNote }) {
   return {
     id,
     status,
@@ -284,19 +710,7 @@ const MOCK_MEET_REQUESTS = (() => {
   const c1 = BASE_COUNSELORS[0];
   const c2 = BASE_COUNSELORS[1];
 
-  const dates = [
-    "2026-02-03",
-    "2026-02-04",
-    "2026-02-05",
-    "2026-02-06",
-    "2026-02-07",
-    "2026-02-10",
-    "2026-02-11",
-    "2026-02-12",
-    "2026-02-13",
-    "2026-02-14",
-  ];
-
+  const dates = ["2026-02-03", "2026-02-04", "2026-02-05", "2026-02-06", "2026-02-07", "2026-02-10", "2026-02-11", "2026-02-12", "2026-02-13", "2026-02-14"];
   let n = 1;
 
   for (let i = 0; i < 5; i += 1) {
@@ -309,7 +723,7 @@ const MOCK_MEET_REQUESTS = (() => {
         time: SAMPLE_TIMES[i % SAMPLE_TIMES.length],
         mode: i % 2 === 0 ? "Online" : "In-person",
         reason: REASON_OPTIONS[i % REASON_OPTIONS.length],
-        notes: i === 2 ? longNotes(i + 1) : `Pending notes ${i + 1}: ${longNotes(i + 1).slice(0, 220)}...`,
+        notes: longNotes(i + 1),
         counselor: i % 2 === 0 ? c1 : c2,
         student: makeStudent(++n),
       })
@@ -326,7 +740,7 @@ const MOCK_MEET_REQUESTS = (() => {
         time: SAMPLE_TIMES[(i + 3) % SAMPLE_TIMES.length],
         mode: i % 2 === 0 ? "Online" : "In-person",
         reason: REASON_OPTIONS[(i + 2) % REASON_OPTIONS.length],
-        notes: i === 1 ? longNotes(i + 10) : `Approved notes ${i + 1}: ${longNotes(i + 10).slice(0, 240)}...`,
+        notes: longNotes(i + 10),
         counselor: i % 2 === 0 ? c1 : c2,
         student: makeStudent(++n),
         meetLink: i % 2 === 0 ? `https://meet.google.com/sample-${i}-link` : "",
@@ -344,7 +758,7 @@ const MOCK_MEET_REQUESTS = (() => {
         time: SAMPLE_TIMES[(i + 5) % SAMPLE_TIMES.length],
         mode: i % 2 === 0 ? "Online" : "In-person",
         reason: REASON_OPTIONS[(i + 4) % REASON_OPTIONS.length],
-        notes: i === 4 ? longNotes(i + 20) : `Disapproved notes ${i + 1}: ${longNotes(i + 20).slice(0, 220)}...`,
+        notes: longNotes(i + 20),
         counselor: i % 2 === 0 ? c1 : c2,
         student: makeStudent(++n),
       })
@@ -363,11 +777,11 @@ const MOCK_MEET_REQUESTS = (() => {
         time: SAMPLE_TIMES[(i + 6) % SAMPLE_TIMES.length],
         mode: i % 2 === 0 ? "Online" : "In-person",
         reason: REASON_OPTIONS[(i + 6) % REASON_OPTIONS.length],
-        notes: i === 0 ? longNotes(i + 30) : `Canceled notes ${i + 1}: ${longNotes(i + 30).slice(0, 230)}...`,
+        notes: longNotes(i + 30),
         counselor: i % 2 === 0 ? c1 : c2,
         student: makeStudent(++n),
         canceledAt,
-        cancelNote: `Canceled due to schedule conflict. ${"Please reschedule. ".repeat(6)}`,
+        cancelNote: "Canceled due to schedule conflict.",
       })
     );
   }
@@ -375,37 +789,25 @@ const MOCK_MEET_REQUESTS = (() => {
   return base.slice(0, 20);
 })();
 
-/* ===================== UI ===================== */
-function Badge({ children, tone = "slate" }) {
-  const map = {
-    slate: "bg-slate-100 text-slate-700 border-slate-200",
-    amber: "bg-amber-50 text-amber-800 border-amber-100",
-    emerald: "bg-emerald-50 text-emerald-800 border-emerald-100",
-    red: "bg-red-50 text-red-800 border-red-100",
-    gray: "bg-slate-50 text-slate-700 border-slate-200",
-    blue: "bg-blue-50 text-blue-800 border-blue-100",
-    violet: "bg-violet-50 text-violet-800 border-violet-100",
-  };
-
+/* ===================== UI PRIMITIVES ===================== */
+function Badge({ children, className = "" }) {
   return (
-    <span
-      className={
-        ["inline-flex items-center rounded-full border px-2.5 py-1", "text-[11px] font-extrabold"].join(" ") +
-        " " +
-        (map[tone] || map.slate)
-      }
-    >
+    <span className={["inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-extrabold bg-slate-50 text-slate-700 border-slate-200", className].join(" ")}>
       {children}
     </span>
   );
 }
 
-function statusTone(status) {
-  if (status === STATUS.PENDING) return "amber";
-  if (status === STATUS.APPROVED) return "emerald";
-  if (status === STATUS.DISAPPROVED) return "red";
-  if (status === STATUS.CANCELED) return "gray";
-  return "slate";
+function Button({ variant = "solid", size = "md", className = "", ...props }) {
+  const base = "inline-flex items-center justify-center font-extrabold transition disabled:opacity-50 disabled:cursor-not-allowed";
+  const sizing = size === "sm" ? "h-9 px-3 rounded-xl text-xs" : "h-11 px-4 rounded-2xl text-sm";
+
+  const solid = "bg-slate-800 text-white hover:bg-slate-900";
+  const soft = "bg-slate-50 text-slate-800 border border-slate-200 hover:bg-slate-100";
+  const outline = "bg-white text-slate-800 border border-slate-200 hover:bg-slate-50";
+
+  const style = variant === "soft" ? soft : variant === "outline" ? outline : solid;
+  return <button className={[base, sizing, style, className].join(" ")} {...props} />;
 }
 
 function Notice({ tone = "slate", message, onClose }) {
@@ -423,18 +825,18 @@ function Notice({ tone = "slate", message, onClose }) {
     <div className={["rounded-2xl border px-4 py-3 shadow-sm", toneMap[tone] || toneMap.slate].join(" ")}>
       <div className="flex items-start justify-between gap-3">
         <div className="text-sm font-extrabold">{message}</div>
-        <button
-          onClick={onClose}
-          className="px-3 py-1.5 rounded-xl text-xs font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-        >
+        <Button size="sm" variant="soft" onClick={onClose}>
           Dismiss
-        </button>
+        </Button>
       </div>
     </div>
   );
 }
 
-function ModalShell({ open, onClose, children }) {
+
+function ModalShell({ open, onClose, children, zClass = "z-[9999]" }) {
+  useBodyScrollLock(open);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => {
@@ -450,10 +852,31 @@ function ModalShell({ open, onClose, children }) {
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-[9999] bg-black/40 p-2 sm:p-4 grid place-items-center"
-      onMouseDown={(e) => {
+      className={[
+        "fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center",
+        "p-0 sm:p-4",
+        zClass,
+      ].join(" ")}
+      onPointerDown={(e) => {
         if (e.target === e.currentTarget) onClose?.();
       }}
+      style={{ overscrollBehavior: "none" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ModalCard({ className = "", children, sheet = false, style }) {
+  return (
+    <div
+      style={style}
+      className={[
+        "w-full overflow-hidden bg-white border border-slate-200 shadow-2xl flex flex-col",
+        sheet ? "rounded-t-3xl rounded-b-none sm:rounded-3xl" : "rounded-2xl sm:rounded-3xl",
+        sheet ? "h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[90dvh]" : "max-h-[92dvh] sm:max-h-[90dvh]",
+        className,
+      ].join(" ")}
     >
       {children}
     </div>
@@ -481,23 +904,19 @@ function KVGrid({ items }) {
     </dl>
   );
 }
-
-function PillTab({ active, onClick, label, count, tone }) {
-  const dot =
-    {
-      slate: "bg-slate-400",
-      amber: "bg-amber-400",
-      emerald: "bg-emerald-500",
-      red: "bg-red-500",
-      gray: "bg-slate-400",
-    }[tone] || "bg-slate-400";
+function PillTab({ tabKey, active, onClick, label, count }) {
+  const dot = active ? "bg-white" : "bg-slate-400";
 
   return (
     <button
+      type="button"
+      data-tab-key={tabKey}
       onClick={onClick}
       className={[
-        "px-3 py-2 rounded-2xl border text-sm font-extrabold transition",
-        active ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
+        "shrink-0 snap-start",
+        "px-3 sm:px-4 py-2 rounded-2xl border transition",
+        "text-xs sm:text-sm font-extrabold",
+        active ? "bg-slate-800 text-white border-slate-800" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
       ].join(" ")}
     >
       <span className="inline-flex items-center gap-2">
@@ -516,68 +935,106 @@ function PillTab({ active, onClick, label, count, tone }) {
   );
 }
 
-/**
- * ✅ Stress-test friendly + responsive:
- * - Sticky controls inside the list card
- * - List area scrolls (desktop + mobile)
- * - Buttons wrap properly
- */
-function Pagination({ page, totalPages, onPage }) {
+function PaginationBar({ page, totalPages, onPage }) {
   if (totalPages <= 1) return null;
 
-  const maxButtons = 5;
-  const start = Math.max(1, Math.min(page - 2, totalPages - (maxButtons - 1)));
-  const end = Math.min(totalPages, start + (maxButtons - 1));
-  const pages = [];
-  for (let p = start; p <= end; p += 1) pages.push(p);
+  const go = (p) => onPage(Math.min(totalPages, Math.max(1, p)));
+
+  // show up to 5 page buttons on desktop, centered around current page
+  const getPages = () => {
+    const maxButtons = 5;
+
+    if (totalPages <= maxButtons) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+
+    const half = Math.floor(maxButtons / 2); // 2
+    let start = page - half;
+    let end = page + half;
+
+    if (start < 1) {
+      start = 1;
+      end = maxButtons;
+    }
+    if (end > totalPages) {
+      end = totalPages;
+      start = totalPages - maxButtons + 1;
+    }
+
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+  };
+
+  const pages = getPages();
 
   return (
-    <div className="pt-4 pb-1 flex flex-col items-center gap-2">
-      <div className="flex items-center gap-2 flex-wrap justify-center">
-        <button
-          onClick={() => onPage(Math.max(1, page - 1))}
-          disabled={page <= 1}
-          className="px-4 py-2 rounded-xl text-sm font-extrabold border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50"
-        >
+    <>
+      {/* ✅ MOBILE (keep your current style) */}
+      <div className="sm:hidden flex items-center justify-center gap-2">
+        <Button size="sm" variant="outline" onClick={() => go(page - 1)} disabled={page <= 1}>
           Prev
-        </button>
+        </Button>
 
-        {pages.map((p) => {
-          const active = p === page;
-          return (
+        <div className="px-4 h-9 rounded-xl border border-slate-200 bg-white text-sm font-extrabold text-slate-700 inline-flex items-center">
+          {page} / {totalPages}
+        </div>
+
+        <Button size="sm" variant="outline" onClick={() => go(page + 1)} disabled={page >= totalPages}>
+          Next
+        </Button>
+      </div>
+
+      {/* ✅ DESKTOP (like your screenshot) */}
+      <div className="hidden sm:flex flex-col items-center gap-2">
+        <div className="flex items-center justify-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => go(page - 1)} disabled={page <= 1}>
+            Prev
+          </Button>
+
+          {pages.map((p) => (
             <button
               key={p}
-              onClick={() => onPage(p)}
+              onClick={() => go(p)}
               className={[
-                "h-10 w-10 rounded-xl text-sm font-extrabold border transition",
-                active ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
+                "h-10 min-w-[40px] px-3 rounded-xl border text-sm font-extrabold transition",
+                p === page
+                  ? "bg-slate-900 text-white border-slate-900"
+                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
               ].join(" ")}
             >
               {p}
             </button>
-          );
-        })}
+          ))}
 
-        <button
-          onClick={() => onPage(Math.min(totalPages, page + 1))}
-          disabled={page >= totalPages}
-          className="px-4 py-2 rounded-xl text-sm font-extrabold border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50"
-        >
-          Next
-        </button>
-      </div>
+          <Button size="sm" variant="outline" onClick={() => go(page + 1)} disabled={page >= totalPages}>
+            Next
+          </Button>
+        </div>
 
-      <div className="text-xs font-bold text-slate-500">
-        Page {page} / {totalPages}
+        <div className="text-xs font-bold text-slate-600">
+          Page <span className="font-black">{page}</span> / {totalPages}
+        </div>
       </div>
+    </>
+  );
+}
+
+
+function SheetGrabber({ dragHandleProps }) {
+  return (
+    <div {...dragHandleProps} className="sm:hidden flex flex-col items-center gap-2 pt-3 pb-2 select-none" style={{ touchAction: "none" }}>
+      <div className="h-1.5 w-12 rounded-full bg-slate-200" />
     </div>
   );
 }
 
-/* ===================== MAIN (COUNSELOR) ===================== */
 export default function CounselorMeetRequests() {
   const [notice, setNotice] = useState({ tone: "slate", message: "" });
   const toastTimerRef = useRef(null);
+
+  // ✅ add this
+  const tabsRowRef = useRef(null);
+
+
 
   useEffect(() => {
     return () => {
@@ -618,26 +1075,51 @@ export default function CounselorMeetRequests() {
     const dir = getCounselorDirectoryFromSettings(lsGet(SETTINGS_KEY, null), BASE_COUNSELORS);
     return normalizeRequestsWithCounselors(base, dir);
   });
-
-  useEffect(() => {
-    lsSet(STORAGE_KEY, requests);
-  }, [requests]);
+useEffect(() => {
+  lsSet(STORAGE_KEY, requests);
+  dispatchMeetRequestsUpdated(); // ✅ same-tab instant refresh
+}, [requests]);
 
   useEffect(() => {
     setRequests((prev) => normalizeRequestsWithCounselors(prev, counselorDirectory));
   }, [counselorDirectory]);
 
   const [tab, setTab] = useState("All");
+
+  // ✅ Reset tab strip scroll so Pending is not half-hidden when you open this section
+  useEffect(() => {
+    const row = tabsRowRef.current;
+    if (!row) return;
+    row.scrollTo({ left: 0, behavior: "auto" });
+  }, []);
+
+  // ✅ Keep active tab visible (center it nicely)
+  useEffect(() => {
+    const row = tabsRowRef.current;
+    if (!row) return;
+
+    const btn = row.querySelector(`[data-tab-key="${tab}"]`);
+    if (!btn) return;
+
+    requestAnimationFrame(() => {
+      btn.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    });
+  }, [tab]);
+
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = useState(SORT.NEWEST);
 
-  const [selected, setSelected] = useState(null);
-  const [openCancel, setOpenCancel] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
+  const [openReschedule, setOpenReschedule] = useState(false);
 
-  // ✅ responsive stress-test defaults:
-  // - more items per page on large screens, fewer on small screens (handled by layout)
-  const pageSize = 8;
-  const [page, setPage] = useState(1);
+  const selected = useMemo(() => {
+    if (!selectedId) return null;
+    return requests.find((r) => r.id === selectedId) || null;
+  }, [requests, selectedId]);
+
+  useEffect(() => {
+    if (!selected) setOpenReschedule(false);
+  }, [selected]);
 
   const myRequests = useMemo(
     () => requests.filter((r) => (r.counselor?.counselorId || "") === COUNSELOR_SCOPE.counselorId),
@@ -651,17 +1133,19 @@ export default function CounselorMeetRequests() {
       approved: count(STATUS.APPROVED),
       disapproved: count(STATUS.DISAPPROVED),
       canceled: count(STATUS.CANCELED),
+      rescheduled: count(STATUS.RESCHEDULED),
       all: myRequests.length,
     };
   }, [myRequests]);
 
   const tabs = useMemo(
     () => [
-      { key: STATUS.PENDING, label: "Pending", count: counts.pending, tone: "amber" },
-      { key: STATUS.APPROVED, label: "Approved", count: counts.approved, tone: "emerald" },
-      { key: STATUS.DISAPPROVED, label: "Disapproved", count: counts.disapproved, tone: "red" },
-      { key: STATUS.CANCELED, label: "Canceled", count: counts.canceled, tone: "gray" },
-      { key: "All", label: "All", count: counts.all, tone: "slate" },
+      { key: STATUS.PENDING, label: "Pending", count: counts.pending },
+      { key: STATUS.APPROVED, label: "Approved", count: counts.approved },
+      { key: STATUS.RESCHEDULED, label: "Rescheduled", count: counts.rescheduled },
+      { key: STATUS.DISAPPROVED, label: "Disapproved", count: counts.disapproved },
+      { key: STATUS.CANCELED, label: "Canceled", count: counts.canceled },
+      { key: "All", label: "All", count: counts.all },
     ],
     [counts]
   );
@@ -673,20 +1157,21 @@ export default function CounselorMeetRequests() {
     const filtered = !needle
       ? byTab
       : byTab.filter((r) => {
-          // ✅ do NOT search long notes (stress-test friendly)
           const hay = (
-            `${r.id} ${r.status} ${r.createdAt} ${r.updatedAt || ""} ${r.date} ${r.time} ${r.mode} ${r.reason} ` +
+            `${r.status} ${r.createdAt} ${r.updatedAt || ""} ${r.date} ${r.time} ${r.mode} ${r.reason} ` +
             `${r.student?.name || ""} ${r.student?.studentId || ""} ${r.student?.email || ""} ${r.student?.courses || ""}`
           ).toLowerCase();
           return hay.includes(needle);
         });
 
     const sorted = filtered.slice();
-    if (sortBy === SORT.NEWEST) sorted.sort((a, b) => (compareCreatedAt(a, b) < 0 ? 1 : -1));
-    else if (sortBy === SORT.OLDEST) sorted.sort((a, b) => (compareCreatedAt(a, b) < 0 ? -1 : 1));
+    const cmpCreated = (a, b) => compareCreatedAt(a, b);
+
+    if (sortBy === SORT.NEWEST) sorted.sort((a, b) => (cmpCreated(a, b) < 0 ? 1 : cmpCreated(a, b) > 0 ? -1 : 0));
+    else if (sortBy === SORT.OLDEST) sorted.sort((a, b) => (cmpCreated(a, b) < 0 ? -1 : cmpCreated(a, b) > 0 ? 1 : 0));
     else if (sortBy === SORT.DATE_ASC) sorted.sort((a, b) => (parseDateKey(a.date) || 0) - (parseDateKey(b.date) || 0));
     else if (sortBy === SORT.DATE_DESC) sorted.sort((a, b) => (parseDateKey(b.date) || 0) - (parseDateKey(a.date) || 0));
-    else sorted.sort((a, b) => (compareCreatedAt(a, b) < 0 ? 1 : -1));
+    else sorted.sort((a, b) => (cmpCreated(a, b) < 0 ? 1 : cmpCreated(a, b) > 0 ? -1 : 0));
 
     return sorted;
   }, [myRequests, tab, q, sortBy]);
@@ -695,59 +1180,136 @@ export default function CounselorMeetRequests() {
     setPage(1);
   }, [tab, q, sortBy]);
 
+  const pageSize = 3;
+  const [page, setPage] = useState(1);
+
   const total = filteredSorted.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = clampPage(page, totalPages);
 
   const pageItems = useMemo(() => {
     const start = (safePage - 1) * pageSize;
-    const end = start + pageSize;
-    return filteredSorted.slice(start, end);
+    return filteredSorted.slice(start, start + pageSize);
   }, [filteredSorted, safePage]);
 
   const showingFrom = total === 0 ? 0 : (safePage - 1) * pageSize + 1;
   const showingTo = Math.min(safePage * pageSize, total);
 
+  const [pageAnimKey, setPageAnimKey] = useState(0);
+  useEffect(() => {
+    setPageAnimKey((k) => k + 1);
+  }, [safePage]);
+
   const updateRequest = (id, patch) => {
     setRequests((prev) => {
       const stamp = nowStamp();
-      return prev.map((r) => {
-        if (r.id !== id) return r;
-        const next = { ...r, ...patch, updatedAt: stamp };
-
-        if (next.status !== STATUS.CANCELED) {
-          next.canceledAt = "";
-          next.cancelNote = "";
-        } else {
-          next.canceledAt = next.canceledAt || stamp;
-          next.cancelNote = String(next.cancelNote || "");
-        }
-        return next;
-      });
+      return prev.map((r) => (r.id === id ? { ...r, ...patch, updatedAt: stamp } : r));
     });
+  };
+
+ const approveWithAutoMeet = async (r) => {
+  if (!r?.id) return;
+
+  syncCalendarSelectedDate(r.date); // ✅ Calendar auto-select this date
+
+  updateRequest(r.id, { status: STATUS.APPROVED });
+
+
+    doToast("blue", "Approved • Creating Meet link…", 2200);
+
+    try {
+      const meetLink = await createGoogleMeetLinkViaApi({
+        date: r.date,
+        time: r.time,
+        studentEmail: r.student?.email,
+        counselorName: r.counselor?.name || "Counselor",
+        reason: r.reason,
+      });
+
+      updateRequest(r.id, { meetLink });
+      doToast("blue", "Meet link created");
+    } catch {
+      doToast("red", "Meet link failed (backend required)");
+    }
   };
 
   const setStatus = (r, status) => {
     if (!r?.id) return;
+
+    if (status === STATUS.APPROVED) {
+      approveWithAutoMeet(r);
+      return;
+    }
+
     updateRequest(r.id, { status });
-    doToast(status === STATUS.APPROVED ? "blue" : status === STATUS.DISAPPROVED ? "red" : "amber", `${status}: ${r.id}`);
+    doToast(status === STATUS.DISAPPROVED ? "red" : "blue", status);
   };
+function formatMinutesTo12h(totalMinutes) {
+  let hh24 = Math.floor(totalMinutes / 60) % 24;
+  const mm = totalMinutes % 60;
+
+  const ap = hh24 >= 12 ? "PM" : "AM";
+  let hh12 = hh24 % 12;
+  if (hh12 === 0) hh12 = 12;
+
+  return `${String(hh12).padStart(2, "0")}:${String(mm).padStart(2, "0")} ${ap}`;
+}
+
+function addMinutesToTime(timeStr, addMins = 60) {
+  const start = parseTimeToMinutes(timeStr);
+  if (start == null) return "";
+  return formatMinutesTo12h(start + addMins);
+}
+
+
 
   const [meetLinkDraft, setMeetLinkDraft] = useState("");
-  const [cancelNoteDraft, setCancelNoteDraft] = useState("");
+  const [reschedDateDraft, setReschedDateDraft] = useState("");
+  const [reschedTimeDraft, setReschedTimeDraft] = useState(SAMPLE_TIMES[0]);
+  const [reschedModeDraft, setReschedModeDraft] = useState(MODES[0]);
 
   useEffect(() => {
     if (!selected) return;
     setMeetLinkDraft(String(selected.meetLink || ""));
-    setCancelNoteDraft("");
+    setReschedDateDraft(String(selected.date || ""));
+    setReschedTimeDraft(String(selected.time || SAMPLE_TIMES[0]));
+    setReschedModeDraft(String(selected.mode || MODES[0]));
   }, [selected]);
+
+  const canApproveDecline = selected?.status === STATUS.PENDING || selected?.status === STATUS.RESCHEDULED;
+  const canReschedule = selected?.status !== STATUS.CANCELED && selected?.status !== STATUS.DISAPPROVED;
+  const canEditMeetLink = selected?.mode === "Online" && selected?.status === STATUS.APPROVED;
+
+  const officeMeta = useMemo(() => getOfficeMeta(selected?.counselor?.campus, selected?.student?.campus), [selected]);
+
+  const originalRescheduleOk = useMemo(() => {
+    if (!selected) return true;
+    return isTwoHoursBeforeSession(selected.date, selected.time);
+  }, [selected]);
+
+  const newScheduleOk = useMemo(() => {
+    const date = String(reschedDateDraft || "").trim();
+    const time = String(reschedTimeDraft || "").trim();
+    if (!date || !time) return false;
+    const startMs = toSessionStartMs(date, time);
+    if (!startMs) return false;
+    return Date.now() <= startMs - 2 * 60 * 60 * 1000;
+  }, [reschedDateDraft, reschedTimeDraft]);
+
+  const reschedError = useMemo(() => {
+    if (!selected) return "";
+    if (!originalRescheduleOk) return "Reschedule blocked: you must reschedule at least 2 hours before the current session.";
+    if (!reschedDateDraft) return "Please choose a new date.";
+    if (!reschedTimeDraft) return "Please choose a new time.";
+    if (!newScheduleOk) return "Invalid new schedule: must be at least 2 hours from now.";
+    return "";
+  }, [selected, originalRescheduleOk, reschedDateDraft, reschedTimeDraft, newScheduleOk]);
 
   const saveMeetLink = () => {
     if (!selected?.id) return;
     const link = meetLinkDraft.trim();
     updateRequest(selected.id, { meetLink: link });
     doToast("blue", link ? "Meet link saved" : "Meet link cleared");
-    setSelected((p) => (p ? { ...p, meetLink: link, updatedAt: nowStamp() } : p));
   };
 
   const copyMeetLink = async (link) => {
@@ -755,116 +1317,84 @@ export default function CounselorMeetRequests() {
     doToast(ok ? "blue" : "red", ok ? "Copied Meet link" : "Copy failed");
   };
 
-  // ✅ stress test seed (fast)
-  // - Generates MANY items quickly without huge notes in the list (notes are only in modal)
-  const seedSampleData = () => {
-    const dir = getCounselorDirectoryFromSettings(lsGet(SETTINGS_KEY, null), BASE_COUNSELORS);
-
-    // keep original 20 + add more for stress test
-    const EXTRA = 180; // total ~200 items
-    const extra = [];
-    const base = MOCK_MEET_REQUESTS.slice();
-
-    const c1 = BASE_COUNSELORS[0];
-    const c2 = BASE_COUNSELORS[1];
-
-    for (let i = 1; i <= EXTRA; i += 1) {
-      const idx = i + 50;
-      const statusPick = i % 4 === 0 ? STATUS.PENDING : i % 4 === 1 ? STATUS.APPROVED : i % 4 === 2 ? STATUS.DISAPPROVED : STATUS.CANCELED;
-      const mode = i % 2 === 0 ? "Online" : "In-person";
-      const day = (i % 26) + 1;
-      const createdAt = `2026-01-${String((i % 28) + 1).padStart(2, "0")} ${String((i % 9) + 8).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}`;
-      const date = `2026-02-${String(day).padStart(2, "0")}`;
-      const time = SAMPLE_TIMES[i % SAMPLE_TIMES.length];
-
-      extra.push(
-        makeReq({
-          id: `MEET-${1000 + idx}`,
-          status: statusPick,
-          createdAt,
-          date,
-          time,
-          mode,
-          reason: REASON_OPTIONS[i % REASON_OPTIONS.length],
-          notes: longNotes(idx), // big notes exist but NOT shown in list
-          counselor: i % 2 === 0 ? c1 : c2,
-          student: makeStudent(200 + idx),
-          meetLink: statusPick === STATUS.APPROVED && mode === "Online" ? `https://meet.google.com/stress-${idx}` : "",
-          canceledAt: statusPick === STATUS.CANCELED ? nowStamp() : "",
-          cancelNote: statusPick === STATUS.CANCELED ? "Canceled due to schedule conflict." : "",
-        })
-      );
+  const confirmRescheduleAndEmail = () => {
+    if (!selected?.id) return;
+    if (reschedError) {
+      doToast("red", reschedError);
+      return;
     }
 
-    const normalized = normalizeRequestsWithCounselors([...base, ...extra], dir);
-    setRequests(normalized);
-    doToast("green", `Stress data loaded (${normalized.length})`);
-  };
+    const nextDate = String(reschedDateDraft || "").trim();
+    const nextTime = String(reschedTimeDraft || "").trim();
+    const nextMode = String(reschedModeDraft || "").trim();
+syncCalendarSelectedDate(nextDate); // ✅ Calendar auto-select new date
 
-  const confirmCancelAndEmail = () => {
-    if (!selected?.id) return;
+    const oldDate = selected.date;
+    const oldTime = selected.time;
+    const oldMode = selected.mode;
 
-    const note = cancelNoteDraft.trim();
-    const stamp = nowStamp();
-
-    updateRequest(selected.id, { status: STATUS.CANCELED, canceledAt: stamp, cancelNote: note });
-    setSelected((p) => (p ? { ...p, status: STATUS.CANCELED, canceledAt: stamp, cancelNote: note, updatedAt: stamp } : p));
-    setOpenCancel(false);
-
-    const mailto = buildCancelMailto({
-      studentEmail: selected.student?.email,
-      studentName: selected.student?.name,
-      requestId: selected.id,
-      date: selected.date,
-      time: selected.time,
-      mode: selected.mode,
-      counselorName: selected.counselor?.name,
-      cancelNote: note,
+    updateRequest(selected.id, {
+      status: STATUS.RESCHEDULED,
+      date: nextDate,
+      time: nextTime,
+      mode: nextMode,
+      meetLink: "",
     });
 
-    if (!mailto) {
+    setOpenReschedule(false);
+
+    const to = selected.student?.email;
+    if (!String(to || "").trim()) {
       doToast("red", "No student email found");
       return;
     }
 
-    doToast("amber", `Canceled: ${selected.id}`);
-    window.location.href = mailto;
+    const { subject, body } = buildRescheduleEmailContent({
+      studentName: normalizeStudent(selected.student, 0)?.name,
+      oldDate,
+      oldTime,
+      oldMode,
+      newDate: nextDate,
+      newTime: nextTime,
+      newMode: nextMode,
+      counselorName: selected.counselor?.name,
+      counselorCampus: selected.counselor?.campus,
+      studentCampus: selected.student?.campus,
+    });
+
+    doToast("blue", "Opening Gmail compose…");
+    openGmailComposeOrMailto({ to, subject, body });
   };
 
   const emptyHint = q.trim() ? "Try a different keyword." : tab !== "All" ? "No items in this tab." : "No requests yet.";
 
-  const canApproveDecline = selected?.status === STATUS.PENDING;
-  const canCancel = selected?.status === STATUS.PENDING;
-  const isCanceled = selected?.status === STATUS.CANCELED;
-  const canEditMeetLink = selected?.mode === "Online" && selected?.status === STATUS.APPROVED;
+  const closeDetails = () => {
+    setOpenReschedule(false);
+    setSelectedId(null);
+  };
+
+  const sheetView = openReschedule ? "reschedule" : selected ? "details" : null;
+
+  const drag = useSheetDragClose({
+    enabled: true,
+    onClose: sheetView === "reschedule" ? () => setOpenReschedule(false) : closeDetails,
+  });
+
 
   return (
     <div className="space-y-4">
       <Notice tone={notice.tone} message={notice.message} onClose={() => setNotice({ tone: "slate", message: "" })} />
 
-      {/* HEADER */}
       <section className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
         <div className="p-5 sm:p-6">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
               <div className="text-xl sm:text-2xl font-black tracking-tight text-slate-900">Meet Requests</div>
-              <div className="mt-1 text-xs sm:text-sm font-bold text-slate-500">
-                Stress-test ready: list is scrollable, notes only open in the popup.
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 flex-wrap">
-              <button
-                onClick={seedSampleData}
-                className="px-4 py-2.5 rounded-2xl text-sm font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-              >
-                Load stress data
-              </button>
+         
             </div>
           </div>
         </div>
 
-        {/* TOOLBAR */}
         <div className="border-t border-slate-200 bg-slate-50 p-4 sm:p-5">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex-1 min-w-[240px]">
@@ -872,16 +1402,13 @@ export default function CounselorMeetRequests() {
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search by student name, ID, course, date, request ID…"
+                  placeholder="Search by student name, ID, course, date…"
                   className="w-full h-11 rounded-2xl border border-slate-200 bg-white pl-4 pr-20 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
                 />
                 {q ? (
-                  <button
-                    onClick={() => setQ("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-xl text-xs font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-                  >
+                  <Button size="sm" variant="soft" onClick={() => setQ("")} className="absolute right-2 top-1/2 -translate-y-1/2">
                     Clear
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </div>
@@ -901,11 +1428,22 @@ export default function CounselorMeetRequests() {
             </div>
           </div>
 
-          <div className="mt-4 flex items-center gap-2 flex-wrap">
-            {tabs.map((t) => (
-              <PillTab key={t.key} active={tab === t.key} onClick={() => setTab(t.key)} label={t.label} count={t.count} tone={t.tone} />
-            ))}
-          </div>
+          <div
+  ref={tabsRowRef}
+  className="mt-4 -mx-1 px-1 flex items-center gap-2 overflow-x-auto flex-nowrap tab-scroll snap-x snap-mandatory"
+>
+  {tabs.map((t) => (
+    <PillTab
+      key={t.key}
+      tabKey={t.key}
+      active={tab === t.key}
+      onClick={() => setTab(t.key)}
+      label={t.label}
+      count={t.count}
+    />
+  ))}
+</div>
+
 
           <div className="mt-4 text-sm font-semibold text-slate-600">
             Showing <span className="font-black">{showingFrom}</span>–<span className="font-black">{showingTo}</span> of{" "}
@@ -914,175 +1452,141 @@ export default function CounselorMeetRequests() {
         </div>
       </section>
 
-      {/* LIST */}
       <section className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
         <div className="px-5 sm:px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap">
           <div className="text-sm font-black text-slate-800">Requests</div>
           <div className="text-xs font-bold text-slate-500">Click an item to manage it.</div>
         </div>
 
-        {/* ✅ SCROLL AREA (stress test) */}
         <div className="meet-scroll">
           {pageItems.length === 0 ? (
             <div className="p-6 sm:p-8">
               <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6">
                 <div className="text-base font-black text-slate-900">No results</div>
                 <div className="mt-1 text-sm font-semibold text-slate-600">{emptyHint}</div>
-                <div className="mt-4 flex items-center gap-2 flex-wrap">
-                  {q ? (
-                    <button
-                      onClick={() => setQ("")}
-                      className="px-4 py-2.5 rounded-2xl text-sm font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-                    >
-                      Clear search
-                    </button>
-                  ) : (
-                    <button
-                      onClick={seedSampleData}
-                      className="px-4 py-2.5 rounded-2xl text-sm font-extrabold bg-slate-900 text-white hover:bg-slate-800"
-                    >
-                      Load stress data
-                    </button>
-                  )}
-                </div>
               </div>
             </div>
           ) : (
-            <div className="p-4 sm:p-6 space-y-3">
-              {pageItems.map((r) => (
-                <button
-                  key={r.id}
-                  onClick={() => setSelected(r)}
-                  className="w-full text-left rounded-2xl border border-slate-200 bg-white hover:bg-slate-50/60 transition px-4 sm:px-5 py-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Badge tone={statusTone(r.status)}>{r.status}</Badge>
-                        <div className="text-base font-black text-slate-900 truncate">{r.reason}</div>
-                        <div className="text-xs font-bold text-slate-500 truncate">
-                          • {r.date} • {r.time} • {r.mode} • 1 hr
-                        </div>
-                      </div>
+            <>
+<div key={pageAnimKey} className="page-enter-right p-4 sm:p-6 space-y-4">
+  {pageItems.map((r) => (
+   <button
+  key={r.id}
+  onClick={() => {
+    setSelectedId(r.id);
+    setOpenReschedule(false);
+  }}
+  className="w-full text-left rounded-2xl border border-slate-200 bg-white hover:bg-slate-50/60 transition
+             px-4 py-4 sm:px-6 sm:py-5"
+>
+  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+    {/* LEFT */}
+   <div className="min-w-0">
+  <div className="flex items-center gap-2 min-w-0">
+    <span className="text-sm sm:text-base font-black text-slate-900 truncate">
+      {r.reason}
+    </span>
+    <span className="text-slate-400 font-black">•</span>
+    <span className="text-sm sm:text-base font-black text-slate-600 shrink-0">
+      {r.date}
+    </span>
+  </div>
 
-                      {/* ✅ Request section: Full name + Student ID + Course (NO notes in list) */}
-                      <div className="mt-2 flex items-center gap-2 flex-wrap">
-                        <Badge tone="slate">{r.id}</Badge>
-                        <Badge tone="violet">{r.student?.name || "Full Name"}</Badge>
-                        <Badge tone="slate">{r.student?.studentId || "Student ID"}</Badge>
-                        <Badge tone="slate">{r.student?.courses || "Course"}</Badge>
+  <div className="mt-1 text-xs sm:text-sm font-extrabold text-slate-700">
+    {r.time} <span className="text-slate-400">•</span> {addMinutesToTime(r.time, 60)}
+  </div>
 
-                        {r.status === STATUS.APPROVED && r.mode === "Online" ? (
-                          <Badge tone={r.meetLink ? "blue" : "gray"}>{r.meetLink ? "Meet link ready" : "Meet link pending"}</Badge>
-                        ) : null}
-                      </div>
 
-                      {/* ✅ notes removed from list (shown only in popup) */}
-                      <div className="mt-3 text-xs font-bold text-slate-400">Notes hidden • open to view</div>
-                    </div>
+      {/* Student */}
+      <div className="mt-2 text-xs sm:text-sm font-bold text-slate-600">
+        <div className="font-extrabold text-slate-800 break-words">
+          {r.student?.name || "Full Name"}
+        </div>
+        <div className="mt-0.5 break-words">
+          {r.student?.courses || "Course"}
+        </div>
+      </div>
+    </div>
 
-                    <div className="text-slate-400 text-2xl leading-none select-none">›</div>
-                  </div>
-                </button>
-              ))}
+    {/* RIGHT / FOOT */}
+    <div className="flex flex-wrap items-center gap-2 sm:flex-col sm:items-end sm:gap-2">
+      <span className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-black border border-emerald-200 bg-emerald-50 text-emerald-900">
+        {r.status}
+      </span>
 
-              <Pagination page={safePage} totalPages={totalPages} onPage={(p) => setPage(p)} />
-            </div>
+      <span className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-black border border-slate-200 bg-slate-50 text-slate-700">
+        {r.mode === "In-person" ? "Face-to-Face" : "Online"}
+      </span>
+
+      <div className="text-[11px] font-bold text-slate-400 sm:self-end">
+        #{r.id}
+      </div>
+    </div>
+  </div>
+</button>
+
+  ))}
+</div>
+
+
+
+              <div className="pagination-sticky">
+                <PaginationBar page={safePage} totalPages={totalPages} onPage={(p) => setPage(p)} />
+              </div>
+            </>
           )}
         </div>
       </section>
 
-      {/* DETAILS MODAL */}
+      {/* SINGLE FULLSCREEN SHEET */}
       <ModalShell
-        open={!!selected}
+        open={!!sheetView}
         onClose={() => {
-          setSelected(null);
-          setOpenCancel(false);
+          if (sheetView === "reschedule") setOpenReschedule(false);
+          else closeDetails();
         }}
+        zClass="z-[9999]"
       >
-        {selected ? (
-          <div className="w-full max-w-4xl rounded-3xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
-            {/* Header */}
-            <div className="px-4 sm:px-6 py-4 border-b border-slate-200 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-base sm:text-lg font-black text-slate-900">Request details</div>
-                <div className="mt-0.5 flex items-center gap-2 flex-wrap">
-                  <Badge tone={statusTone(selected.status)}>{selected.status}</Badge>
-                  <span className="text-xs font-bold text-slate-500">{selected.id}</span>
-                </div>
-              </div>
+        {sheetView === "details" && selected ? (
+          <ModalCard sheet className="max-w-4xl sm:max-w-4xl" style={drag.sheetStyle}>
+            <SheetGrabber dragHandleProps={drag.dragHandleProps} />
 
-              <div className="flex items-center gap-2 flex-wrap justify-end">
-                {canApproveDecline ? (
-                  <>
-                    <button
-                      onClick={() => {
-                        setStatus(selected, STATUS.APPROVED);
-                        setSelected((p) => (p ? { ...p, status: STATUS.APPROVED, canceledAt: "", cancelNote: "" } : p));
-                      }}
-                      className="px-3 py-2 rounded-xl text-xs font-extrabold bg-indigo-600 text-white hover:bg-indigo-700"
-                    >
-                      Approve
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setStatus(selected, STATUS.DISAPPROVED);
-                        setSelected((p) => (p ? { ...p, status: STATUS.DISAPPROVED, canceledAt: "", cancelNote: "" } : p));
-                      }}
-                      className="px-3 py-2 rounded-xl text-xs font-extrabold bg-rose-600 text-white hover:bg-rose-700"
-                    >
-                      Disapprove
-                    </button>
-                  </>
-                ) : null}
-
-                {canCancel ? (
-                  <button
-                    onClick={() => setOpenCancel(true)}
-                    className="px-3 py-2 rounded-xl text-xs font-extrabold border border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100"
-                  >
-                    Cancel & Email
-                  </button>
-                ) : null}
-
-                <button
-                  onClick={() => {
-                    setSelected(null);
-                    setOpenCancel(false);
-                  }}
-                  className="px-3 py-2 rounded-xl text-xs font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-                >
-                  Close
-                </button>
+            <div className="px-4 sm:px-6 py-4 border-b border-slate-200">
+              <div className="text-base sm:text-lg font-black text-slate-900">Session details</div>
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                <Badge>{selected.status}</Badge>
               </div>
             </div>
 
-            {/* Body (scrollable for mobile/long notes) */}
-            <div className="p-4 sm:p-6 bg-slate-50">
+            <div className="flex-1 min-h-0 overflow-auto p-4 sm:p-6 bg-slate-50">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <Card title="Notes" className="lg:col-span-2">
+                  <div className="notes-scroll text-sm font-semibold text-slate-700 whitespace-pre-wrap break-words">{selected.notes || "—"}</div>
+                </Card>
+
                 <Card title="Info">
                   <KVGrid
                     items={[
-                      { label: "Type", value: "Session" },
-                      { label: "Session type", value: selected.mode },
+                      { label: "Session type", value: selected.mode === "In-person" ? "Face-to-Face (In-person)" : "Online" },
                       { label: "Duration", value: "1 hour" },
                       { label: "Reason", value: selected.reason },
-                      { label: "Date & time", value: `${selected.date} • ${selected.time}` },
+                      { label: "Appointment time", value: `${selected.date} • ${selected.time}` },
                       { label: "Counselor", value: selected.counselor?.name || "Counselor" },
+                      { label: "Campus", value: officeMeta.campus },
+                      { label: "Office", value: selected.mode === "In-person" ? officeMeta.office : "Not required (Online)" },
                       {
                         label: "Online link",
                         value:
                           selected.mode !== "Online"
-                            ? "Not required."
+                            ? "Not required (Face-to-Face)."
                             : selected.status !== STATUS.APPROVED
                               ? "Available after approval."
                               : selected.meetLink
                                 ? "Provided."
                                 : "Not yet provided.",
                       },
-                      { label: "Submitted", value: selected.createdAt },
-                      { label: "Last updated", value: selected.updatedAt || selected.createdAt },
+                      { label: "Submitted", value: formatStamp12h(selected.createdAt) },
+                      { label: "Last updated", value: formatStamp12h(selected.updatedAt || selected.createdAt) },
                     ]}
                   />
                 </Card>
@@ -1101,13 +1605,9 @@ export default function CounselorMeetRequests() {
 
                 <Card title="Meet link" className="lg:col-span-2">
                   {selected.mode !== "Online" ? (
-                    <div className="text-sm font-semibold text-slate-700">In-person request (no Meet link needed).</div>
+                    <div className="text-sm font-semibold text-slate-700">Face-to-Face request (no Meet link needed).</div>
                   ) : !canEditMeetLink ? (
-                    <div className="text-sm font-semibold text-slate-700">
-                      {selected.status === STATUS.APPROVED
-                        ? "You can add the Google Meet link after approval."
-                        : "Approve first, then set the Google Meet link."}
-                    </div>
+                    <div className="text-sm font-semibold text-slate-700">Approve first, then set the Google Meet link.</div>
                   ) : (
                     <div className="space-y-3">
                       <input
@@ -1117,28 +1617,17 @@ export default function CounselorMeetRequests() {
                         className="w-full h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
                       />
                       <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                          onClick={saveMeetLink}
-                          className="px-3 py-2 rounded-xl text-xs font-extrabold bg-slate-900 text-white hover:bg-slate-800"
-                        >
-                          Save
-                        </button>
+                        <Button onClick={saveMeetLink}>Save</Button>
 
                         {selected.meetLink ? (
                           <>
-                            <button
-                              onClick={() => copyMeetLink(selected.meetLink)}
-                              className="px-3 py-2 rounded-xl text-xs font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-                            >
+                            <Button variant="outline" onClick={() => copyMeetLink(selected.meetLink)}>
                               Copy
-                            </button>
-                            <a
-                              href={selected.meetLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="px-3 py-2 rounded-xl text-xs font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-                            >
-                              Open
+                            </Button>
+                            <a href={selected.meetLink} target="_blank" rel="noreferrer">
+                              <Button variant="outline" type="button">
+                                Open
+                              </Button>
                             </a>
                           </>
                         ) : (
@@ -1148,96 +1637,171 @@ export default function CounselorMeetRequests() {
                     </div>
                   )}
                 </Card>
-
-                {/* ✅ NOTES ONLY IN POPUP */}
-                <Card title="Notes" className="lg:col-span-2">
-                  <div className="notes-scroll text-sm font-semibold text-slate-700 whitespace-pre-wrap break-words">
-                    {selected.notes || "—"}
-                  </div>
-                </Card>
-
-                {isCanceled ? (
-                  <Card title="Cancellation details" className="lg:col-span-2">
-                    <KVGrid
-                      items={[
-                        { label: "Canceled on", value: selected.canceledAt || "—" },
-                        { label: "Reason", value: selected.cancelNote ? selected.cancelNote : "No cancel reason provided." },
-                      ]}
-                    />
-                  </Card>
-                ) : null}
               </div>
             </div>
-          </div>
+
+           <div className="shrink-0 border-t border-slate-200 bg-white px-4 sm:px-6 py-4 pb-[calc(env(safe-area-inset-bottom)+16px)]">
+  <div className="flex w-full flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-end sm:gap-2">
+    {/* Primary actions */}
+    {canApproveDecline ? (
+      <>
+        <Button
+          className="w-full sm:w-auto sm:order-1"
+          onClick={() => setStatus(selected, STATUS.APPROVED)}
+        >
+          Approve
+        </Button>
+
+        {canReschedule ? (
+          <Button
+            className="w-full sm:w-auto sm:order-2"
+            onClick={() => setOpenReschedule(true)}
+          >
+            Reschedule
+          </Button>
+        ) : null}
+
+        <Button
+          className="w-full sm:w-auto sm:order-3"
+          onClick={() => setStatus(selected, STATUS.DISAPPROVED)}
+        >
+          Disapprove
+        </Button>
+      </>
+    ) : canReschedule ? (
+      <Button
+        className="w-full sm:w-auto sm:order-1"
+        onClick={() => setOpenReschedule(true)}
+      >
+        Reschedule
+      </Button>
+    ) : null}
+
+    {/* Close always last */}
+    <Button
+      variant="soft"
+      className="w-full sm:w-auto sm:order-4"
+      onClick={closeDetails}
+    >
+      Close
+    </Button>
+  </div>
+</div>
+
+          </ModalCard>
+        ) : null}
+
+        {sheetView === "reschedule" ? (
+          <ModalCard sheet className="max-w-lg sm:max-w-lg" style={drag.sheetStyle}>
+            <SheetGrabber dragHandleProps={drag.dragHandleProps} />
+
+            <div className="px-4 sm:px-6 py-4 border-b border-slate-200">
+              <div className="text-base font-black text-slate-900">Reschedule appointment</div>
+              <div className="text-xs font-bold text-slate-500 mt-1">Must be rescheduled at least 2 hours before the session.</div>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-auto p-4 sm:p-6 space-y-3 bg-slate-50">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="text-xs font-bold text-slate-500">Student email</div>
+                <div className="mt-1 text-sm font-extrabold text-slate-900 break-words">{selected?.student?.email || "—"}</div>
+
+                <div className="mt-3 text-xs font-bold text-slate-500">Current appointment</div>
+                <div className="mt-1 text-sm font-extrabold text-slate-900 break-words">
+                  {selected?.date || "—"} • {selected?.time || "—"} • {selected?.mode === "In-person" ? "Face-to-Face" : selected?.mode || "—"}
+                </div>
+
+                <div className="mt-3 text-xs font-bold text-slate-500">Campus & office</div>
+                <div className="mt-1 text-sm font-extrabold text-slate-900 break-words">
+                  {officeMeta.campus} • {officeMeta.office}
+                </div>
+              </div>
+
+              {reschedError ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-extrabold text-red-900">{reschedError}</div>
+              ) : null}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <div className="text-xs font-bold text-slate-500">New date</div>
+                  <input
+                    value={reschedDateDraft}
+                    onChange={(e) => setReschedDateDraft(e.target.value)}
+                    type="date"
+                    className="w-full h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="text-xs font-bold text-slate-500">New time</div>
+                  <select
+                    value={reschedTimeDraft}
+                    onChange={(e) => setReschedTimeDraft(e.target.value)}
+                    className="w-full h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
+                  >
+                    {SAMPLE_TIMES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1 sm:col-span-2">
+                  <div className="text-xs font-bold text-slate-500">Mode</div>
+                  <select
+                    value={reschedModeDraft}
+                    onChange={(e) => setReschedModeDraft(e.target.value)}
+                    className="w-full h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
+                  >
+                    {MODES.map((m) => (
+                      <option key={m} value={m}>
+                        {m === "In-person" ? "Face-to-Face (In-person)" : "Online"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="shrink-0 px-4 sm:px-6 py-4 border-t border-slate-200 bg-white">
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <Button variant="soft" className="w-full sm:w-auto order-2 sm:order-1" onClick={() => setOpenReschedule(false)}>
+                  Back
+                </Button>
+                <Button className="w-full sm:w-auto order-1 sm:order-2" onClick={confirmRescheduleAndEmail} disabled={!!reschedError}>
+                  Reschedule & Email Student
+                </Button>
+              </div>
+            </div>
+          </ModalCard>
         ) : null}
       </ModalShell>
 
-      {/* CANCEL MODAL */}
-      <ModalShell open={openCancel} onClose={() => setOpenCancel(false)}>
-        <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
-          <div className="px-4 sm:px-6 py-4 border-b border-slate-200 flex items-start justify-between gap-3">
-            <div>
-              <div className="text-base font-black text-slate-900">Cancel request</div>
-              <div className="text-xs font-bold text-slate-500 mt-0.5">This will open an email to notify the student.</div>
-            </div>
-            <button
-              onClick={() => setOpenCancel(false)}
-              className="px-3 py-2 rounded-xl text-xs font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-            >
-              Close
-            </button>
-          </div>
-
-          <div className="p-4 sm:p-6 space-y-3 bg-slate-50">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="text-xs font-bold text-slate-500">Student email</div>
-              <div className="mt-1 text-sm font-extrabold text-slate-900 break-words">{selected?.student?.email || "—"}</div>
-            </div>
-
-            <textarea
-              value={cancelNoteDraft}
-              onChange={(e) => setCancelNoteDraft(e.target.value)}
-              placeholder="Optional: reason for canceling..."
-              rows={4}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:ring-4 focus:ring-slate-100"
-            />
-
-            <div className="flex items-center gap-2 flex-wrap justify-end">
-              <button
-                onClick={() => setOpenCancel(false)}
-                className="px-4 py-2.5 rounded-2xl text-sm font-extrabold border border-slate-200 bg-white hover:bg-slate-50"
-              >
-                Back
-              </button>
-              <button
-                onClick={confirmCancelAndEmail}
-                className="px-4 py-2.5 rounded-2xl text-sm font-extrabold bg-amber-600 text-white hover:bg-amber-700"
-              >
-                Cancel & Email
-              </button>
-            </div>
-
-            <div className="text-xs font-bold text-slate-500">Note: If student email is missing, the email action will fail.</div>
-          </div>
-        </div>
-      </ModalShell>
-
       <style>{`
-        /* ✅ LIST SCROLLBAR (stress-test) */
-        .meet-scroll{
-          /* keeps the card compact; list scrolls instead of page getting too long */
-          max-height: calc(100vh - 260px);
-          overflow: auto;
-          overscroll-behavior: contain;
-          -webkit-overflow-scrolling: touch;
-        }
+     .meet-scroll{
+  max-height: calc(100dvh - 260px);
+  overflow-y: auto;
+  overflow-x: hidden;   /* ✅ prevent horizontal scrollbar on pagination animation */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
 
-        /* mobile: give more height */
         @media (max-width: 640px){
-          .meet-scroll{ max-height: calc(100vh - 210px); }
+          .meet-scroll{ max-height: calc(100dvh - 210px); }
         }
 
-        /* ✅ NOTES SCROLLBAR (popup) */
+        .meet-list-pad{ padding-bottom: 84px; }
+
+        .pagination-sticky{
+          position: sticky;
+          bottom: 0;
+          z-index: 5;
+          border-top: 1px solid rgb(226 232 240);
+          background: rgba(255,255,255,.92);
+          backdrop-filter: blur(8px);
+          padding: 10px 12px;
+        }
+
         .notes-scroll{
           max-height: 260px;
           overflow: auto;
@@ -1246,21 +1810,22 @@ export default function CounselorMeetRequests() {
           padding-right: 6px;
         }
 
-        /* nice scrollbar */
-        .meet-scroll::-webkit-scrollbar,
-        .notes-scroll::-webkit-scrollbar{
-          width: 10px;
-          height: 10px;
+        .tab-scroll{
+          -webkit-overflow-scrolling: touch;
+          scroll-snap-type: x mandatory;
+          scrollbar-width: none;
+          scroll-padding-left: 8px;
+          scroll-padding-right: 8px;
         }
-        .meet-scroll::-webkit-scrollbar-thumb,
-        .notes-scroll::-webkit-scrollbar-thumb{
-          background: rgba(100,116,139,.35);
-          border-radius: 999px;
-          border: 2px solid rgba(255,255,255,.65);
+        .tab-scroll::-webkit-scrollbar{ display: none; }
+
+        .page-enter-right{
+          animation: pageEnterRight .18s ease-out;
+          will-change: transform, opacity;
         }
-        .meet-scroll::-webkit-scrollbar-track,
-        .notes-scroll::-webkit-scrollbar-track{
-          background: transparent;
+        @keyframes pageEnterRight{
+          from { opacity: .65; transform: translateX(14px); }
+          to   { opacity: 1; transform: translateX(0); }
         }
       `}</style>
     </div>

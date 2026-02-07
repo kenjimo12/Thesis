@@ -3,12 +3,25 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 /**
  * CounselorDashboard - Calendar / Schedule
+ * Connected to Meet Requests (localStorage)
  * - Responsive on all device sizes (xs → 4k)
- * - No duplicate calendar icon (use native date input icon)
- * - Mobile pagination is compact (Prev | x/y | Next) to avoid ugly wraps
+ * - Uses native date input icon (no duplicate calendar icon)
+ * - Mobile pagination is compact (Prev | x/y | Next)
  * - Desktop pagination uses 5-page window
- * - Details: BottomSheet on mobile, CenterModal on desktop
+ * - Details: centered modal on desktop, fullscreen on mobile
+ *
+ * Rules:
+ * - Calendar shows ONLY Approved & Rescheduled meet requests
+ * - Uses counselor scope filter (COUNSELOR_SCOPE)
  */
+
+/* ===================== STORAGE / SYNC ===================== */
+const MEET_REQUESTS_KEY = "student_dashboard:meet_requests:v2";
+const CALENDAR_SELECTED_DATE_KEY = "counselor_dashboard:calendar_selected_date:v1";
+const MEET_REQUESTS_UPDATED_EVENT = "counselor_dashboard:meet_requests_updated";
+
+/* Keep in sync with MeetRequests.jsx scope */
+const COUNSELOR_SCOPE = { counselorId: "C-001" };
 
 /* ===================== RULES ===================== */
 const WORK_START = "08:00";
@@ -16,53 +29,47 @@ const WORK_END = "17:00";
 const LUNCH_BLOCK = "12:00"; // not allowed
 const PAGE_SIZE = 3;
 
-/* ===================== OPTIONS ===================== */
-const REASONS = [
-  "Academic Stress",
-  "Depression / Low Mood",
-  "Self-Esteem",
-  "Anxiety/Overthinking",
-  "Family / Relationship",
-  "Grief / Loss",
-  "Other",
-];
+const STATUS = {
+  PENDING: "Pending",
+  APPROVED: "Approved",
+  DISAPPROVED: "Disapproved",
+  CANCELED: "Canceled",
+  RESCHEDULED: "Rescheduled",
+};
 
-const COURSES = [
-  "Bachelor of Science in Nursing",
-  "Bachelor of Elementary Education (SPED)",
-  "Bachelor of Physical Education",
-  "Bachelor of Secondary Education",
-  "Bachelor of Science in Business Administration (BSBA)",
-  "Bachelor of Science in Accounting Information System",
-  "Bachelor of Science in Information Technology",
-  "Bachelor of Science in Computer Science",
-  "Bachelor of Science in Hospitality Management (BSHM)",
-  "Bachelor of Science in Tourism Management (BSTM)",
-  "Bachelor of Science in Criminology",
-  "Bachelor of Arts in English Language",
-  "Bachelor of Arts in Psychology",
-  "Bachelor of Arts in Political Science",
-];
+const ALLOWED_CALENDAR_STATUSES = new Set([STATUS.APPROVED, STATUS.RESCHEDULED]);
 
-const STUDENTS = [
-  { name: "Maria Santos", id: "2026-008899" },
-  { name: "Juan Dela Cruz", id: "2026-004455" },
-  { name: "Anne Marie Santos", id: "2026-001122" },
-  { name: "Paolo Reyes", id: "2026-009911" },
-  { name: "Kim Alvarez", id: "2026-003210" },
-  { name: "Louise Tan", id: "2026-007777" },
-  { name: "Noah Garcia", id: "2026-001010" },
-  { name: "Sofia Ramos", id: "2026-006060" },
-  { name: "Jasmine Cruz", id: "2026-008181" },
-  { name: "Mark Lim", id: "2026-002222" },
-];
+/* ===================== STORAGE HELPERS ===================== */
+function isBrowser() {
+  return typeof window !== "undefined" && typeof document !== "undefined";
+}
 
-/* ===================== LONG NOTE (stress test) ===================== */
-const LONG_NOTE =
-  "This is a stress-test note. ".repeat(22) +
-  "Extra-long continuous text to verify wrapping: " +
-  "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss" +
-  "\n\nNew line test:\n- Item 1\n- Item 2\n- Item 3\n\nEnd of note.";
+function safeJSONParse(v, fallback) {
+  try {
+    return JSON.parse(v) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function lsGet(key, fallback) {
+  if (!isBrowser()) return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw != null ? safeJSONParse(raw, fallback) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function lsSet(key, value) {
+  if (!isBrowser()) return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore
+  }
+}
 
 /* ===================== HELPERS ===================== */
 function pad2(n) {
@@ -139,6 +146,7 @@ function buildHaystack(item) {
     item.reason,
     item.course,
     item.mode,
+    item.status,
     item.date,
     item.start,
     item.end,
@@ -147,14 +155,6 @@ function buildHaystack(item) {
     .map(safeText)
     .join(" ")
     .toLowerCase();
-}
-
-function addDaysISO(iso, deltaDays) {
-  if (!isISODate(iso)) return iso;
-  const [y, m, d] = iso.split("-").map(Number);
-  const dt = new Date(y, m - 1, d);
-  dt.setDate(dt.getDate() + deltaDays);
-  return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
 }
 
 function isPastSession(dateISO, endHHMM) {
@@ -177,115 +177,76 @@ function buildPageWindow5(currentPage, totalPages) {
   return [start, start + 1, start + 2, start + 3, start + 4];
 }
 
-/* ===================== SAMPLE DATA (20 Active + 20 History) ===================== */
-function pick(arr, idx) {
-  return arr[idx % arr.length];
+function coerceArray(v) {
+  return Array.isArray(v) ? v : [];
 }
 
-function allowedStartTimes() {
-  const hours = [8, 9, 10, 11, 13, 14, 15, 16];
-  return hours.map((h) => `${pad2(h)}:00`);
+/* MeetRequests time is "08:00 AM" etc */
+function parseTime12ToHHMM(timeStr) {
+  const s = String(timeStr || "").trim();
+  if (!s) return "";
+  if (/^\d{2}:\d{2}$/.test(s)) return s;
+
+  const m = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!m) return "";
+  let hh = Number(m[1]);
+  const mm = Number(m[2]);
+  const ap = String(m[3]).toUpperCase();
+
+  if (hh === 12) hh = 0;
+  if (ap === "PM") hh += 12;
+
+  return `${pad2(hh)}:${pad2(mm)}`;
 }
 
-function makeSession({
-  id,
-  date,
-  start,
-  mode,
-  studentName,
-  studentId,
-  course,
-  reason,
-  studentNotes,
-  meetingLink,
-  done,
-}) {
-  const end = toHHMM(minFromHHMM(start) + 60);
-  return {
-    id,
-    date,
-    start,
-    end,
-    mode,
-    studentName,
-    studentId,
-    course,
-    reason,
-    studentNotes,
-    meetingLink: mode === "Online" ? meetingLink : "",
-    done: !!done,
-  };
+function addMinutesHHMM(hhmm, deltaMin) {
+  const base = minFromHHMM(hhmm);
+  return toHHMM(base + deltaMin);
 }
 
-function buildSampleData() {
-  const baseDate = todayISO();
-  const yesterday = addDaysISO(baseDate, -1);
-  const starts = allowedStartTimes();
+/**
+ * Bridge: MeetRequests (storage) -> Calendar sessions
+ * Only Approved & Rescheduled requests are included.
+ */
+function mapMeetRequestsToSessions(requests) {
+  const list = coerceArray(requests);
 
-  const active = Array.from({ length: 20 }, (_, i) => {
-    const who = pick(STUDENTS, i);
-    const mode = i % 2 === 0 ? "Face-to-Face" : "Online";
-    const reason = pick(REASONS, i);
-    const course = pick(COURSES, i);
-    const start = starts[i % starts.length];
-    const notes =
-      i % 3 === 0
-        ? LONG_NOTE
-        : `Student notes: ${reason}. ${"More detail. ".repeat((i % 7) + 1)}`;
+  return list
+    .filter((r) => {
+      const cid = r?.counselor?.counselorId || "";
+      if (cid !== COUNSELOR_SCOPE.counselorId) return false;
 
-    const link = `https://meet.google.com/${pick(["abc", "qwe", "lmn", "uvw", "def"], i)}-${pad2(
-      i + 13
-    )}${pad2((i + 7) % 99)}-${pick(["hij", "iop", "stu", "bcd", "xyz"], i)}`;
+      const st = String(r?.status || "").trim();
+      if (!ALLOWED_CALENDAR_STATUSES.has(st)) return false;
 
-    return makeSession({
-      id: `S-ACT-${pad2(i + 1)}`,
-      date: baseDate,
-      start,
-      mode,
-      studentName: who.name,
-      studentId: who.id,
-      course,
-      reason,
-      studentNotes: notes,
-      meetingLink: link,
-      done: false,
-    });
-  });
+      return true;
+    })
+    .map((r) => {
+      const date = String(r?.date || "").trim();
+      const start = parseTime12ToHHMM(r?.time);
+      const end = start ? addMinutesHHMM(start, 60) : "";
 
-  const history = Array.from({ length: 20 }, (_, i) => {
-    const who = pick(STUDENTS, i + 3);
-    const mode = i % 2 === 1 ? "Face-to-Face" : "Online";
-    const reason = pick(REASONS, i + 2);
-    const course = pick(COURSES, i + 4);
-    const start = starts[(i + 2) % starts.length];
-    const notes =
-      i % 4 === 0
-        ? LONG_NOTE
-        : `Completed session notes: ${reason}. ${"Follow-up recommended. ".repeat((i % 6) + 1)}`;
+      const modeRaw = String(r?.mode || "").toLowerCase();
+      const mode = modeRaw.includes("online") ? "Online" : "Face-to-Face";
 
-    const link = `https://meet.google.com/${pick(["mno", "rst", "pqr", "tuv", "ghi"], i)}-${pad2(
-      (i + 11) % 99
-    )}${pad2((i + 21) % 99)}-${pick(["aaa", "bbb", "ccc", "ddd", "eee"], i)}`;
-
-    return makeSession({
-      id: `S-HIS-${pad2(i + 1)}`,
-      date: yesterday,
-      start,
-      mode,
-      studentName: who.name,
-      studentId: who.id,
-      course,
-      reason,
-      studentNotes: notes,
-      meetingLink: link,
-      done: true,
-    });
-  });
-
-  return { active, history, baseDate };
+      return {
+        id: String(r?.id || "").trim(),
+        status: String(r?.status || "").trim(),
+        date,
+        start,
+        end,
+        mode,
+        studentName: String(r?.student?.name || "").trim(),
+        studentId: String(r?.student?.studentId || "").trim(),
+        course: String(r?.student?.courses || "").trim(),
+        reason: String(r?.reason || "").trim(),
+        studentNotes: String(r?.notes || ""),
+        meetingLink: mode === "Online" ? String(r?.meetLink || "").trim() : "",
+        done: false,
+      };
+    })
+    .filter((s) => s.id && isISODate(s.date) && s.start && s.end);
 }
-
-const SAMPLE = buildSampleData();
 
 /* ===================== HOOKS ===================== */
 function useMediaQuery(query) {
@@ -336,12 +297,26 @@ function ModePill({ mode }) {
       className={[
         "inline-flex items-center rounded-full border px-2.5 py-1",
         "text-[11px] font-extrabold whitespace-nowrap",
-        online
-          ? "bg-emerald-50 text-emerald-800 border-emerald-100"
-          : "bg-slate-50 text-slate-800 border-slate-200",
+        online ? "bg-emerald-50 text-emerald-800 border-emerald-100" : "bg-slate-50 text-slate-800 border-slate-200",
       ].join(" ")}
     >
       {online ? "Online" : "Face-to-Face"}
+    </span>
+  );
+}
+
+function StatusPill({ status }) {
+  const s = String(status || "");
+  const cls =
+    s === STATUS.APPROVED
+      ? "bg-emerald-50 text-emerald-900 border-emerald-100"
+      : s === STATUS.RESCHEDULED
+      ? "bg-blue-50 text-blue-900 border-blue-100"
+      : "bg-amber-50 text-amber-900 border-amber-100";
+
+  return (
+    <span className={["inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-extrabold whitespace-nowrap", cls].join(" ")}>
+      {s || "—"}
     </span>
   );
 }
@@ -350,18 +325,15 @@ function DetailsRow({ label, value }) {
   return (
     <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
       <div className="text-sm text-slate-500">{label}</div>
-      <div
-        className="text-sm font-semibold text-slate-900 break-words sm:text-right"
-        style={{ overflowWrap: "anywhere" }}
-      >
+      <div className="text-sm font-semibold text-slate-900 break-words sm:text-right" style={{ overflowWrap: "anywhere" }}>
         {value || "—"}
       </div>
     </div>
   );
 }
 
-/* ===================== MODALS ===================== */
-function CenterModal({ title, onClose, children }) {
+/* ===================== MODAL (CENTERED DESKTOP, FULLSCREEN MOBILE) ===================== */
+function ResponsiveModal({ title, onClose, children, fullScreenOnMobile = true }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") onClose();
@@ -373,120 +345,40 @@ function CenterModal({ title, onClose, children }) {
   return (
     <div className="fixed inset-0 z-50 cc-fade-in">
       <button className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-label="Close" onClick={onClose} />
-      <div className="absolute inset-0 flex items-center justify-center p-4">
+      <div className="absolute inset-0 flex items-center justify-center p-0 sm:p-4">
         <div
           role="dialog"
           aria-modal="true"
           aria-label={title}
-          className="w-full max-w-2xl rounded-3xl bg-white border border-slate-200 shadow-2xl cc-fade-up overflow-hidden"
-          style={{ maxHeight: "86vh" }}
+          className={[
+            "relative bg-white border border-slate-200 shadow-2xl cc-fade-up",
+            "flex flex-col overflow-hidden",
+            fullScreenOnMobile
+              ? "h-[100dvh] w-[100vw] rounded-none sm:h-auto sm:w-full sm:max-w-3xl sm:rounded-2xl"
+              : "w-full max-w-3xl rounded-2xl",
+            "sm:max-h-[calc(100dvh-2rem)]",
+          ].join(" ")}
+          style={{ paddingTop: fullScreenOnMobile ? "env(safe-area-inset-top, 0px)" : undefined }}
         >
-          <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-base font-extrabold text-slate-900 truncate">{title}</div>
-              <div className="text-sm text-slate-500">Press Esc or click outside to close</div>
+          <div className="shrink-0 bg-white/95 backdrop-blur border-b border-slate-200">
+            <div className="px-4 sm:px-6 py-4 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-base sm:text-lg font-extrabold text-slate-900 truncate">{title}</div>
+                <div className="text-sm text-slate-500">Press Esc or click outside to close</div>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl border border-slate-300 text-sm font-extrabold bg-white hover:bg-slate-50"
+              >
+                Close
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl border border-slate-300 text-sm font-extrabold bg-white hover:bg-slate-50"
-            >
-              Close
-            </button>
-          </div>
-
-          <div className="px-5 py-5 overflow-y-auto" style={{ maxHeight: "calc(86vh - 72px)" }}>
-            {children}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function BottomSheetModal({ title, onClose, children }) {
-  const [translateY, setTranslateY] = useState(0);
-  const dragRef = useRef({ active: false, startY: 0, lastY: 0, startTime: 0 });
-
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const startDrag = useCallback((clientY) => {
-    dragRef.current.active = true;
-    dragRef.current.startY = clientY;
-    dragRef.current.lastY = clientY;
-    dragRef.current.startTime = performance.now();
-  }, []);
-
-  const moveDrag = useCallback((clientY) => {
-    if (!dragRef.current.active) return;
-    dragRef.current.lastY = clientY;
-    const dy = Math.max(0, clientY - dragRef.current.startY);
-    setTranslateY(dy * 0.92);
-  }, []);
-
-  const endDrag = useCallback(() => {
-    if (!dragRef.current.active) return;
-    dragRef.current.active = false;
-
-    const dy = Math.max(0, dragRef.current.lastY - dragRef.current.startY);
-    const dt = Math.max(1, performance.now() - dragRef.current.startTime);
-    const velocity = dy / dt;
-
-    if (dy > 130 || velocity > 0.9) {
-      onClose();
-      return;
-    }
-    setTranslateY(0);
-  }, [onClose]);
-
-  return (
-    <div className="fixed inset-0 z-50 cc-fade-in">
-      <button className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-label="Close" onClick={onClose} />
-
-      <div className="absolute inset-x-0 bottom-0">
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={title}
-          className="w-full rounded-t-3xl bg-white border-t border-slate-200 shadow-2xl cc-fade-up"
-          style={{
-            transform: `translateY(${translateY}px)`,
-            transition: dragRef.current.active ? "none" : "transform 180ms ease-out",
-            maxHeight: "90vh",
-          }}
-        >
-          <div
-            className="pt-4 pb-3 flex justify-center"
-            onPointerDown={(e) => {
-              e.preventDefault();
-              e.currentTarget?.setPointerCapture?.(e.pointerId);
-              startDrag(e.clientY);
-            }}
-            onPointerMove={(e) => moveDrag(e.clientY)}
-            onPointerUp={() => endDrag()}
-            onPointerCancel={() => endDrag()}
-            style={{ touchAction: "none" }}
-          >
-            <div className="h-1.5 w-16 rounded-full bg-slate-300" />
-          </div>
-
-          <div className="px-4 pb-4 border-b border-slate-200">
-            <div className="text-base font-extrabold text-slate-900 truncate">{title}</div>
-            <div className="text-sm text-slate-500">Swipe down or tap outside to close</div>
           </div>
 
           <div
-            className="px-4 py-4 overflow-y-auto"
-            style={{
-              maxHeight: "calc(90vh - 110px)",
-              paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)",
-            }}
+            className="flex-1 px-4 sm:px-6 py-5 overflow-y-auto"
+            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
           >
             {children}
           </div>
@@ -506,8 +398,11 @@ function DetailsContent({ item }) {
         <div className="min-w-0">
           <div className="text-sm font-extrabold text-slate-900">{item.reason}</div>
           <div className="mt-1 text-sm font-semibold text-slate-600">{when}</div>
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            <StatusPill status={item.status} />
+            <ModePill mode={item.mode} />
+          </div>
         </div>
-        <ModePill mode={item.mode} />
       </div>
 
       <div className="p-4 space-y-4">
@@ -521,12 +416,7 @@ function DetailsContent({ item }) {
           <div className="text-sm font-extrabold text-slate-900">Student Notes</div>
           <div
             className="mt-2 text-sm text-slate-800 whitespace-pre-wrap leading-relaxed"
-            style={{
-              maxHeight: 220,
-              overflowY: "auto",
-              overflowWrap: "anywhere",
-              wordBreak: "break-word",
-            }}
+            style={{ maxHeight: 220, overflowY: "auto", overflowWrap: "anywhere", wordBreak: "break-word" }}
           >
             {item.studentNotes || "—"}
           </div>
@@ -568,12 +458,49 @@ function DetailsContent({ item }) {
 export default function Calendar() {
   const isMobile = useMediaQuery("(max-width: 768px)");
 
-  const [selectedDate, setSelectedDate] = useState(() =>
-    isISODate(SAMPLE.baseDate) ? SAMPLE.baseDate : todayISO()
-  );
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const saved = lsGet(CALENDAR_SELECTED_DATE_KEY, "");
+    return isISODate(saved) ? saved : todayISO();
+  });
 
   const [view, setView] = useState("active"); // "active" | "history"
   const [search, setSearch] = useState("");
+
+  const [meetRequests, setMeetRequests] = useState(() => lsGet(MEET_REQUESTS_KEY, []));
+
+  const [nowTick, setNowTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setNowTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const reload = () => {
+      setMeetRequests(lsGet(MEET_REQUESTS_KEY, []));
+      const savedDate = lsGet(CALENDAR_SELECTED_DATE_KEY, "");
+      if (isISODate(savedDate)) setSelectedDate((prev) => (prev === savedDate ? prev : savedDate));
+    };
+
+    reload();
+
+    const onStorage = (e) => {
+      if (!e?.key) return;
+      if (e.key === MEET_REQUESTS_KEY || e.key === CALENDAR_SELECTED_DATE_KEY) reload();
+    };
+
+    const onCustom = () => reload();
+
+    if (isBrowser()) {
+      window.addEventListener("storage", onStorage);
+      window.addEventListener(MEET_REQUESTS_UPDATED_EVENT, onCustom);
+      return () => {
+        window.removeEventListener("storage", onStorage);
+        window.removeEventListener(MEET_REQUESTS_UPDATED_EVENT, onCustom);
+      };
+    }
+
+    return undefined;
+  }, []);
 
   const [selectedId, setSelectedId] = useState(null);
   const detailsOpen = !!selectedId;
@@ -583,9 +510,10 @@ export default function Calendar() {
   const prevPageRef = useRef(1);
   const [pageAnim, setPageAnim] = useState("");
 
+  const rawSessions = useMemo(() => mapMeetRequestsToSessions(meetRequests), [meetRequests]);
+
   const cleaned = useMemo(() => {
-    const all = [...SAMPLE.active, ...SAMPLE.history];
-    return all
+    return rawSessions
       .filter((s) => {
         if (!s?.studentName || !s?.studentId) return false;
         if (!isISODate(s.date)) return false;
@@ -600,7 +528,7 @@ export default function Calendar() {
         return true;
       })
       .map((s) => ({ ...s, _hay: buildHaystack(s) }));
-  }, []);
+  }, [rawSessions]);
 
   const effective = useMemo(
     () =>
@@ -608,7 +536,7 @@ export default function Calendar() {
         ...s,
         _effectiveDone: s.done || isPastSession(s.date, s.end),
       })),
-    [cleaned]
+    [cleaned, nowTick]
   );
 
   const currentListAll = useMemo(() => {
@@ -661,30 +589,31 @@ export default function Calendar() {
   const closeDetails = useCallback(() => setSelectedId(null), []);
 
   const historyActive = view === "history";
+  const hasSessions = rawSessions.length > 0;
 
   return (
-  <div className="space-y-4 w-full px-3 sm:px-0 max-w-none">
-
-
+    <div className="space-y-4 w-full px-3 sm:px-0 max-w-none">
       <GlobalStyles />
 
-      {/* Header */}
       <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-lg sm:text-2xl font-black tracking-tight text-slate-900">Calendar / Schedule</h2>
             <p className="mt-1 text-sm sm:text-base font-medium text-slate-600">
-              {historyActive ? "History" : "Sessions"} • 8:00 AM – 5:00 PM • 1 hour • 12:00 NN unavailable
+              {historyActive ? "History" : "Sessions"} • Approved/Rescheduled only • 8:00 AM – 5:00 PM • 1 hour • 12:00 NN unavailable
             </p>
           </div>
         </div>
 
-        {/* Controls: responsive stack */}
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
           <input
             type="date"
             value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setSelectedDate(next);
+              if (isISODate(next)) lsSet(CALENDAR_SELECTED_DATE_KEY, next);
+            }}
             className={[
               "h-11 w-full sm:w-auto rounded-xl border border-slate-200 bg-white",
               "px-3 text-sm font-semibold text-slate-800",
@@ -698,22 +627,19 @@ export default function Calendar() {
             onClick={() => setView((v) => (v === "history" ? "active" : "history"))}
             className={[
               "h-11 w-full sm:w-auto px-5 rounded-xl text-sm font-extrabold border transition",
-              historyActive
-                ? "bg-slate-900 text-white border-slate-900 hover:bg-slate-800"
-                : "bg-white text-slate-900 border-slate-200 hover:bg-slate-50",
+              historyActive ? "bg-slate-900 text-white border-slate-900 hover:bg-slate-800" : "bg-white text-slate-900 border-slate-200 hover:bg-slate-50",
             ].join(" ")}
           >
             History
           </button>
         </div>
 
-        {/* Search: full width always */}
         <div className="mt-4">
           <div className="relative w-full">
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name, student ID, reason, course…"
+              placeholder="Search by name, student ID, reason, course, status…"
               className={[
                 "w-full h-11 rounded-xl border border-slate-200 bg-white px-3 pr-10",
                 "text-sm sm:text-base font-medium text-slate-900",
@@ -738,8 +664,8 @@ export default function Calendar() {
           <div className="mt-2 text-sm font-medium text-slate-600">
             {currentListAll.length ? (
               <>
-                Showing <span className="text-slate-900">{startIdx + 1}</span>–<span className="text-slate-900">{endIdx}</span>{" "}
-                of <span className="text-slate-900">{currentListAll.length}</span>
+                Showing <span className="text-slate-900">{startIdx + 1}</span>–<span className="text-slate-900">{endIdx}</span> of{" "}
+                <span className="text-slate-900">{currentListAll.length}</span>
               </>
             ) : (
               "No sessions found."
@@ -748,7 +674,6 @@ export default function Calendar() {
         </div>
       </section>
 
-      {/* List */}
       <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-200 bg-slate-50">
           <div className="text-sm font-extrabold text-slate-700">
@@ -760,16 +685,14 @@ export default function Calendar() {
         <div className="p-4">
           {currentListAll.length === 0 ? (
             <div className="text-sm font-semibold text-slate-500">
-              {historyActive ? "No history sessions for this date." : "No sessions scheduled for this date."}
+              {!hasSessions
+                ? "No Approved/Rescheduled meet requests yet."
+                : historyActive
+                ? "No history sessions for this date."
+                : "No sessions scheduled for this date."}
             </div>
           ) : (
-            <div
-              className={[
-                "space-y-3",
-                pageAnim === "in-right" ? "cc-page-in-right" : "",
-                pageAnim === "in-left" ? "cc-page-in-left" : "",
-              ].join(" ")}
-            >
+            <div className={["space-y-3", pageAnim === "in-right" ? "cc-page-in-right" : "", pageAnim === "in-left" ? "cc-page-in-left" : ""].join(" ")}>
               {currentPageItems.map((s) => {
                 const title = `${s.reason} • ${formatRange(s.start, s.end)}`;
                 return (
@@ -798,6 +721,7 @@ export default function Calendar() {
                       </div>
 
                       <div className="justify-self-start sm:justify-self-end flex flex-row sm:flex-col items-center sm:items-end gap-2">
+                        <StatusPill status={s.status} />
                         <ModePill mode={s.mode} />
                         <div className="text-[11px] font-bold text-slate-400 whitespace-nowrap">#{s.id}</div>
                       </div>
@@ -808,7 +732,6 @@ export default function Calendar() {
             </div>
           )}
 
-          {/* Pagination */}
           {currentListAll.length > 0 && totalPages > 1 ? (
             <div className="mt-5 flex flex-col items-center gap-2">
               {isMobile ? (
@@ -854,9 +777,7 @@ export default function Calendar() {
                         onClick={() => setPage(x)}
                         className={[
                           "cc-focus cc-clickable px-3 py-2 rounded-xl border text-sm font-extrabold",
-                          x === safePage
-                            ? "border-slate-900 bg-slate-900 text-white"
-                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                          x === safePage ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
                         ].join(" ")}
                         aria-current={x === safePage ? "page" : undefined}
                       >
@@ -885,17 +806,10 @@ export default function Calendar() {
         </div>
       </section>
 
-      {/* Details Modal */}
-      {selected && isMobile ? (
-        <BottomSheetModal title="Session details" onClose={closeDetails}>
+      {selected ? (
+        <ResponsiveModal title="Session details" onClose={closeDetails} fullScreenOnMobile>
           <DetailsContent item={selected} />
-        </BottomSheetModal>
-      ) : null}
-
-      {selected && !isMobile ? (
-        <CenterModal title="Session details" onClose={closeDetails}>
-          <DetailsContent item={selected} />
-        </CenterModal>
+        </ResponsiveModal>
       ) : null}
     </div>
   );

@@ -5,10 +5,9 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 /**
  * Counselor PHQ-9 (Frontend-only)
  * Updates:
- * - Page size = 3 for List/Calendar/Modal
- * - Bigger, more touch-friendly cards
- * - Course shows full (wraps, no truncation)
- * - No icons
+ * - Custom Course dropdown (full text, wraps, responsive; no overlap)
+ * - Sample first-time students with no submissions -> "No Submission"
+ * - Modal Close moved to top-right corner (button text, not "×")
  */
 
 const COURSES = [
@@ -32,8 +31,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 const MONTH_MS = 30 * DAY_MS;
 
-// ✅ pagination size = 3 (items per page)
-const PAGE_SIZE = 3;
+const PAGE_SIZE = 5;
 const MODAL_PAGE_SIZE = 3;
 const CAL_PAGE_SIZE = 3;
 
@@ -92,6 +90,14 @@ function formatDateShort(ms) {
   } catch {
     return new Date(ms).toLocaleDateString();
   }
+}
+
+function formatLastSubmitted(ms, submissions, variant = "short") {
+  if (ms && typeof ms === "number") {
+    return variant === "word" ? formatDateWord(ms) : formatDateShort(ms);
+  }
+  const isFirstTime = !Array.isArray(submissions) || submissions.length === 0;
+  return isFirstTime ? "No Submission" : "—";
 }
 
 function severityLabelFromScore(score) {
@@ -344,7 +350,7 @@ function SeverityPill({ label }) {
 }
 
 function Legend() {
-  const labels = ["Minimal", "Mild", "Moderate", "Moderately High"];
+  const labels = [];
   return (
     <div className="flex flex-wrap items-center gap-2 text-[11px] sm:text-xs">
       {labels.map((x) => (
@@ -381,6 +387,127 @@ function Segmented({ value, onChange }) {
     </div>
   );
 }
+// Replace ONLY the CourseDropdown() with this version
+// Replace ONLY the CourseDropdown() with this version
+
+function CourseDropdown({ value, onChange, courses }) {
+  const reduce = useReducedMotion();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  const selectedLabel = value === "ALL" ? "All Courses" : value;
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+
+    const onPointerDown = (e) => {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(e.target)) setOpen(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("touchstart", onPointerDown);
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("touchstart", onPointerDown);
+    };
+  }, [open]);
+
+  const panelMotion = reduce
+    ? { initial: { opacity: 1 }, animate: { opacity: 1 }, exit: { opacity: 0 } }
+    : { initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 6 } };
+
+  const optionBtnBase =
+    "w-full text-left px-4 py-3 font-extrabold text-[14px] sm:text-base whitespace-normal break-words leading-snug";
+
+  return (
+   <div ref={rootRef} className="relative w-full min-w-0">
+
+    
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title={selectedLabel}
+        className={cn(
+          "w-full border bg-white rounded-2xl",
+          "px-4 py-2",
+          "min-h-11 h-auto",
+          "flex items-center justify-between gap-3",
+          "hover:bg-slate-50 active:bg-slate-100 transition",
+          "min-w-0 text-left"
+        )}
+      >
+        <span className="flex-1 min-w-0 text-slate-900 font-extrabold text-[14px] sm:text-base whitespace-normal break-words leading-snug">
+          {selectedLabel}
+        </span>
+        <span className="shrink-0 text-slate-500 font-black select-none">▾</span>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={panelMotion.initial}
+            animate={panelMotion.animate}
+            exit={panelMotion.exit}
+            transition={{ duration: reduce ? 0 : 0.14 }}
+            className={cn(
+              "absolute left-0 right-0 mt-2 z-[1000]",
+              "bg-white border shadow-lg rounded-2xl overflow-hidden"
+            )}
+            role="listbox"
+          >
+            <div className="max-h-72 overflow-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  onChange("ALL");
+                  setOpen(false);
+                }}
+                className={cn(
+                  optionBtnBase,
+                  value === "ALL" ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50"
+                )}
+                role="option"
+                aria-selected={value === "ALL"}
+              >
+                All Courses
+              </button>
+
+              {courses.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => {
+                    onChange(c);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    optionBtnBase,
+                    value === c ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50"
+                  )}
+                  role="option"
+                  aria-selected={value === c}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 
 function Modal({ open, title, onClose, children }) {
   const reduce = useReducedMotion();
@@ -429,6 +556,21 @@ function Modal({ open, title, onClose, children }) {
               "max-w-none sm:max-w-5xl"
             )}
           >
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className={cn(
+                "hidden sm:inline-flex items-center justify-center",
+                "absolute top-4 right-4 z-[10]",
+                "h-10 px-4 rounded-full border bg-white",
+                "hover:bg-slate-50 active:bg-slate-100 transition",
+                "text-[12px] sm:text-sm font-black"
+              )}
+            >
+              Close
+            </button>
+
             {children}
           </motion.div>
         </motion.div>
@@ -437,12 +579,6 @@ function Modal({ open, title, onClose, children }) {
   );
 }
 
-/**
- * ✅ Bigger, UI-friendly card:
- * - Larger padding + text
- * - Full course shown (wrap)
- * - Clear info row
- */
 function StudentCard({ student, onOpen }) {
   return (
     <button
@@ -474,7 +610,9 @@ function StudentCard({ student, onOpen }) {
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] sm:text-[13px] font-extrabold text-slate-700">
         <span className="inline-flex items-center gap-2 min-w-0">
           <span className="text-slate-500">Last</span>
-          <span className="text-slate-900 font-black truncate">{formatDateShort(student.latestSubmissionAt)}</span>
+          <span className="text-slate-900 font-black truncate">
+            {formatLastSubmitted(student.latestSubmissionAt, student.submissions, "short")}
+          </span>
         </span>
 
         <span className="inline-flex items-center gap-2">
@@ -528,7 +666,9 @@ export default function CounselorPHQ9() {
       const courseIndex = i % COURSES.length;
       const rng = mulberry32(baseSeed + courseIndex * 1000 + i * 17);
       const fullName = makeName(rng);
-      const submissions = makeWeeklySubmissions(rng, nowMs, 16);
+
+      const isFirstTime = i % 8 === 0;
+      const submissions = isFirstTime ? [] : makeWeeklySubmissions(rng, nowMs, 16);
       const latest = submissions[0] ?? null;
 
       students.push({
@@ -564,7 +704,11 @@ export default function CounselorPHQ9() {
 
   const weeklyOnly = useMemo(() => {
     const weekCutoff = nowMs - WEEK_MS;
-    return dataset.filter((s) => s.latestSubmissionAt && s.latestSubmissionAt >= weekCutoff);
+    return dataset.filter((s) => {
+      const hasRecent = !!s.latestSubmissionAt && s.latestSubmissionAt >= weekCutoff;
+      const isFirstTime = (!s.latestSubmissionAt || s.latestSubmissionAt === null) && (s.submissions?.length ?? 0) === 0;
+      return hasRecent || isFirstTime;
+    });
   }, [dataset, nowMs]);
 
   const filtered = useMemo(() => {
@@ -669,49 +813,56 @@ export default function CounselorPHQ9() {
     : { initial: { opacity: 0, x: 18 }, animate: { opacity: 1, x: 0 }, exit: { opacity: 0, x: -18 } };
 
   return (
-    <div className="w-full min-w-0 max-w-full">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-3 sm:px-6 py-4 sm:py-6 min-w-0">
-        <div className="text-[18px] sm:text-2xl font-black text-slate-900">PHQ-9</div>
-        <div className="mt-1 text-[11px] sm:text-sm font-extrabold text-slate-600">
-          Showing only students with a PHQ submission in the last 7 days.
+  <div className="w-full min-w-0 max-w-full">
+  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-3 sm:px-6 py-4 sm:py-6 min-w-0">
+    <div className="text-[18px] sm:text-2xl font-black text-slate-900">PHQ-9</div>
+    <div className="mt-3 text-base sm:text-lg font-extrabold text-slate-600">
+      Students with PHQ-9 submissions
+    </div>
+
+    {/* Controls row */}
+    <div className="mt-3 sm:mt-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between min-w-0">
+      <div className="hidden sm:flex items-center gap-3 flex-wrap min-w-0">
+        <Legend />
+      </div>
+
+      <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 w-full lg:w-auto min-w-0">
+        <div className="w-full sm:w-auto shrink-0">
+          <Segmented value={view} onChange={setView} />
         </div>
 
-        <div className="mt-3 sm:mt-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between min-w-0">
-          <div className="hidden sm:flex items-center gap-3 flex-wrap min-w-0">
-            <Legend />
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto min-w-0">
-            <Segmented value={view} onChange={setView} />
-
-            <select
-              value={courseFilter}
-              onChange={(e) => setCourseFilter(e.target.value)}
-              className="h-11 px-3 rounded-2xl border bg-white text-[13px] sm:text-sm font-extrabold w-full sm:w-[360px] min-w-0"
-            >
-              <option value="ALL">All Courses</option>
-              {COURSES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search student name…"
-              className="h-11 px-3 rounded-2xl border bg-white text-[13px] sm:text-sm font-extrabold w-full sm:w-[320px] min-w-0"
-            />
-          </div>
-
-          <div className="sm:hidden">
-            <Legend />
-          </div>
+        <div className="w-full sm:w-[360px] lg:w-[440px] shrink-0 min-w-0">
+          <CourseDropdown
+            value={courseFilter}
+            onChange={setCourseFilter}
+            courses={COURSES}
+          />
         </div>
       </div>
 
-      <div className="h-3 sm:h-4" />
+      <div className="sm:hidden">
+        <Legend />
+      </div>
+    </div>
+
+    {/* Search bar row (moved DOWN, full width) */}
+    <div className="mt-3 w-full min-w-0">
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search by name, email, student ID..."
+        className={cn(
+          "h-11 w-full rounded-2xl border bg-white font-extrabold",
+          "text-[13px] sm:text-sm",
+          "px-4 min-w-0"
+        )}
+      />
+    </div>
+  </div>
+
+  <div className="h-3 sm:h-4" />
+
+
 
       <AnimatePresence mode="wait">
         <motion.div
@@ -759,7 +910,8 @@ export default function CounselorPHQ9() {
 
                   <div className="hidden sm:flex flex-col flex-1 min-w-0">
                     <div className="overflow-x-auto flex-1">
-                      <table className="min-w-[1200px] w-full text-sm">
+  <table className="min-w-[1200px] w-full text-sm">
+
                         <thead className="bg-slate-50 border-b">
                           <tr className="text-left">
                             <th className="px-4 py-3 font-black text-slate-700">Student</th>
@@ -774,7 +926,7 @@ export default function CounselorPHQ9() {
                           {paged.length === 0 ? (
                             <tr>
                               <td colSpan={5} className="px-4 py-10 text-center text-slate-500 font-extrabold">
-                                No students found (with PHQ submissions this week).
+                                No students found.
                               </td>
                             </tr>
                           ) : (
@@ -787,7 +939,7 @@ export default function CounselorPHQ9() {
                                 <td className="px-4 py-3 font-black text-slate-900">{s.fullName}</td>
                                 <td className="px-4 py-3 text-slate-700">{s.course}</td>
                                 <td className="px-4 py-3 text-slate-700 whitespace-nowrap">
-                                  {formatDateWord(s.latestSubmissionAt)}
+                                  {formatLastSubmitted(s.latestSubmissionAt, s.submissions, "word")}
                                 </td>
                                 <td className="px-4 py-3">
                                   <SeverityPill label={s.latestSeverity ?? "—"} />
@@ -822,7 +974,7 @@ export default function CounselorPHQ9() {
                       const ms = fromDateInputValue(e.target.value);
                       if (ms != null) setCalendarMs(ms);
                     }}
-                    className="h-11 px-3 rounded-2xl border bg-white text-[13px] sm:text-sm font-extrabold w-full sm:w-[220px]"
+                    className="h-11 px-4 rounded-2xl border bg-white text-[13px] sm:text-sm font-extrabold w-full sm:w-[220px]"
                   />
                   <button
                     type="button"
@@ -943,7 +1095,7 @@ export default function CounselorPHQ9() {
         {selectedStudent && (
           <div className="flex flex-col h-full sm:h-auto min-w-0">
             <div className="px-4 sm:px-6 py-4 border-b min-w-0">
-              <div className="min-w-0">
+              <div className="min-w-0 pr-24">
                 <div className="text-base sm:text-xl font-black text-slate-900 truncate">{selectedStudent.fullName}</div>
 
                 <div className="text-[12px] sm:text-sm text-slate-700 mt-2 whitespace-normal break-words">
@@ -957,7 +1109,10 @@ export default function CounselorPHQ9() {
                     <span className="text-slate-900 font-black tabular-nums">{selectedStudent.latestScore ?? "—"}</span>
                   </div>
                   <div className="text-[12px] sm:text-xs font-extrabold text-slate-600">
-                    Last submitted: <span className="text-slate-900">{formatDateWord(selectedStudent.latestSubmissionAt)}</span>
+                    Last submitted:{" "}
+                    <span className="text-slate-900">
+                      {formatLastSubmitted(selectedStudent.latestSubmissionAt, selectedStudent.submissions, "word")}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1044,7 +1199,7 @@ export default function CounselorPHQ9() {
               )}
             </div>
 
-            <div className="px-4 sm:px-6 py-4 border-t bg-white">
+            <div className="px-4 sm:px-6 py-4 border-t bg-white sm:hidden">
               <button
                 type="button"
                 onClick={closeModal}

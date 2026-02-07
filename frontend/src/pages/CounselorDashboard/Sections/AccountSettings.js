@@ -1,5 +1,6 @@
 // src/pages/CounselorDashboard/Sections/AccountSettings.js
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getUser } from "../../../utils/auth";
 
 const STORAGE_USER_KEY = "user";
@@ -107,6 +108,31 @@ async function fileToAvatarDataUrl(file, sizePx = AVATAR_SIZE_PX, quality = AVAT
   ctx.drawImage(img, sx, sy, side, side, 0, 0, sizePx, sizePx);
 
   return canvas.toDataURL("image/jpeg", quality);
+}
+
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+    return window.matchMedia(query).matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(query);
+    const onChange = () => setMatches(mq.matches);
+
+    onChange();
+
+    if (mq.addEventListener) mq.addEventListener("change", onChange);
+    else mq.addListener(onChange);
+
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", onChange);
+      else mq.removeListener(onChange);
+    };
+  }, [query]);
+
+  return matches;
 }
 
 /* ===================== ICONS ===================== */
@@ -276,10 +302,7 @@ export default function AccountSettings() {
     };
   }, [localUser, storedUser]);
 
-  // committed data (what the profile card shows)
   const [savedProfile, setSavedProfile] = useState(initialSavedProfile);
-
-  // editable state (what inputs change)
   const [draft, setDraft] = useState(initialSavedProfile);
 
   const msgTimerRef = useRef(null);
@@ -289,6 +312,13 @@ export default function AccountSettings() {
 
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [avatarError, setAvatarError] = useState("");
+
+  const isXxs = useMediaQuery("(max-width: 360px)");
+  const [adminOpen, setAdminOpen] = useState(false);
+
+  useEffect(() => {
+    if (isXxs) setAdminOpen(true);
+  }, [isXxs]);
 
   useEffect(() => {
     return () => {
@@ -368,11 +398,13 @@ export default function AccountSettings() {
         <p className="mt-1 sm:mt-2 text-sm sm:text-base font-semibold text-slate-600">Update your profile details.</p>
       </div>
 
-      <form onSubmit={onSaveProfile} className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
+      <form
+        onSubmit={onSaveProfile}
+        className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 pb-28 sm:pb-24 xl:pb-6"
+      >
         <div className="flex items-start justify-between gap-3">
           <div className="text-sm sm:text-lg font-black text-slate-900"></div>
 
-          {/* Desktop button only on xl+ (tablet uses sticky bar) */}
           <button
             type="submit"
             disabled={saveDisabled}
@@ -390,7 +422,6 @@ export default function AccountSettings() {
 
         <div className="mt-4 sm:mt-5">
           <AvatarCompact
-            // IMPORTANT: show committed values only (no live updates while typing)
             fullName={savedProfile.fullName}
             campus={savedProfile.campus}
             avatarDataUrl={savedProfile.avatarDataUrl}
@@ -429,7 +460,6 @@ export default function AccountSettings() {
           />
         </div>
 
-        {/* Admin-managed (desktop only: xl+) */}
         <div className="hidden xl:block mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -467,23 +497,26 @@ export default function AccountSettings() {
           </div>
         </div>
 
-        {/* Admin-managed (tablet/mobile: <xl) */}
-        <details className="xl:hidden mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <details
+          open={adminOpen}
+          onToggle={(e) => setAdminOpen(e.currentTarget.open)}
+          className="xl:hidden mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 max-[360px]:p-3"
+        >
           <summary className="list-none cursor-pointer select-none">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center justify-between gap-3 max-[360px]:items-start max-[360px]:gap-2">
               <div className="min-w-0">
                 <div className="text-sm font-black text-slate-900">Admin-managed</div>
                 <div className="mt-1 text-xs font-bold text-slate-600">Email &amp; Counselor ID</div>
               </div>
 
-              <div className="shrink-0 inline-flex items-center gap-2 text-slate-700">
-                <span className="text-xs font-extrabold">View</span>
+              <div className="shrink-0 inline-flex items-center gap-2 text-slate-700 max-[360px]:gap-1">
+                <span className="text-xs font-extrabold max-[360px]:hidden">View</span>
                 <IconChevronDown className="text-slate-700" />
               </div>
             </div>
           </summary>
 
-          <div className="mt-4 grid grid-cols-1 gap-4">
+          <div className="mt-4 grid grid-cols-1 gap-4 max-[360px]:gap-3">
             <Field
               label="Email"
               value={draft.email}
@@ -505,7 +538,6 @@ export default function AccountSettings() {
           </div>
         </details>
 
-        {/* Desktop inline message: xl+ only */}
         <div className="hidden xl:flex mt-6 items-center justify-between gap-4 flex-wrap">
           <div className="text-sm font-semibold text-slate-700">
             {savedMsg ? <span className="text-slate-900 font-black">{savedMsg}</span> : "Saved on this device."}
@@ -514,9 +546,8 @@ export default function AccountSettings() {
           <div className="text-sm font-semibold text-slate-600">{isDirty ? "Unsaved changes" : "Up to date"}</div>
         </div>
 
-        {/* Mobile/Tablet sticky bar: <xl */}
-        <div className="xl:hidden mt-5 -mx-4 px-4">
-          <div className="sticky bottom-0 pb-3">
+        <div className="xl:hidden mt-5 -mx-4 sm:-mx-6 px-4 sm:px-6">
+          <div className="sticky bottom-0 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
             <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
               <div className="mb-2 text-xs font-bold text-slate-600">
                 {savedMsg ? savedMsg : isDirty ? "Unsaved changes" : "Up to date"}
@@ -686,15 +717,15 @@ function Field({ label, value, onChange, placeholder, type = "text", readOnly = 
 
       <div
         className={[
-          "mt-2 flex items-center gap-2 rounded-xl border px-3",
-          "h-12",
+          "mt-2 flex items-center gap-2 rounded-xl border px-3 max-[360px]:px-2",
+          "min-h-12 h-12 max-[360px]:h-auto max-[360px]:py-2 max-[360px]:items-start",
           readOnly ? "bg-slate-100" : "bg-white",
           hasError
             ? "border-red-200 focus-within:ring-4 focus-within:ring-red-50"
             : "border-slate-200 focus-within:ring-4 focus-within:ring-slate-900/10",
         ].join(" ")}
       >
-        {icon ? <span className="shrink-0">{icon}</span> : null}
+        {icon ? <span className="shrink-0 mt-[1px]">{icon}</span> : null}
         <input
           type={type}
           value={value}
@@ -706,7 +737,7 @@ function Field({ label, value, onChange, placeholder, type = "text", readOnly = 
           aria-describedby={helperId}
           className={[
             "w-full bg-transparent outline-none",
-            "text-base font-semibold",
+            "text-[15px] sm:text-base font-semibold leading-snug",
             readOnly ? "text-slate-900 cursor-not-allowed" : "text-slate-900",
             "placeholder:text-slate-500",
           ].join(" ")}
@@ -722,9 +753,194 @@ function Field({ label, value, onChange, placeholder, type = "text", readOnly = 
   );
 }
 
+/**
+ * Same dropdown design on ALL devices (portal popover), no bottom sheets.
+ */
 function SelectField({ label, value, onChange, placeholder, helper, error, icon, options = [] }) {
   const hasError = Boolean(error);
   const helperId = helper ? `${label.replace(/\s+/g, "-").toLowerCase()}-help` : undefined;
+
+  const rootRef = useRef(null);
+  const buttonRef = useRef(null);
+  const listRef = useRef(null);
+  const idRef = useRef(`sf-${Math.random().toString(36).slice(2, 10)}`);
+  const listboxId = `${idRef.current}-listbox`;
+
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [pos, setPos] = useState({ left: 0, top: 0, width: 0, maxHeight: 280 });
+
+  const selectedIndex = useMemo(() => options.findIndex((opt) => opt === value), [options, value]);
+  const displayText = String(value || "").trim();
+
+  const close = () => setOpen(false);
+
+  const computePos = () => {
+    const el = rootRef.current;
+    if (!el || typeof window === "undefined") return;
+
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth || 0;
+    const vh = window.innerHeight || 0;
+
+    const sidePad = 12;
+    const margin = 8;
+    const minVisible = 200;
+
+    const width = Math.min(rect.width, vw - sidePad * 2);
+    const left = Math.max(sidePad, Math.min(rect.left, vw - width - sidePad));
+
+    let top = rect.bottom + margin;
+    top = Math.min(top, Math.max(margin, vh - margin - minVisible));
+
+    const maxHeight = Math.min(320, Math.floor(vh * 0.55), Math.max(140, vh - top - margin));
+    setPos({ left, top, width, maxHeight });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+
+    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
+    computePos();
+
+    let raf = 0;
+    const schedule = () => {
+      window.cancelAnimationFrame(raf);
+      raf = window.requestAnimationFrame(computePos);
+    };
+
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, true);
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule, true);
+    };
+  }, [open, selectedIndex]);
+
+  useEffect(() => {
+    if (!open) return;
+    const item = listRef.current?.querySelector?.(`[data-idx="${activeIndex}"]`);
+    item?.scrollIntoView?.({ block: "nearest" });
+  }, [open, activeIndex]);
+
+  const selectAt = (idx) => {
+    const opt = options[idx];
+    if (!opt) return;
+    onChange?.(opt);
+    close();
+    buttonRef.current?.focus?.();
+  };
+
+  const onButtonKeyDown = (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!open) setOpen(true);
+      setActiveIndex((i) =>
+        Math.min((i < 0 ? (selectedIndex >= 0 ? selectedIndex : 0) : i) + 1, options.length - 1)
+      );
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!open) setOpen(true);
+      setActiveIndex((i) =>
+        Math.max((i < 0 ? (selectedIndex >= 0 ? selectedIndex : options.length - 1) : i) - 1, 0)
+      );
+      return;
+    }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (!open) setOpen(true);
+      else if (activeIndex >= 0) selectAt(activeIndex);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close();
+    }
+  };
+
+  const onListKeyDown = (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((i) => Math.min((i < 0 ? 0 : i + 1), options.length - 1));
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((i) => Math.max((i < 0 ? 0 : i - 1), 0));
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (activeIndex >= 0) selectAt(activeIndex);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close();
+      buttonRef.current?.focus?.();
+    }
+  };
+
+  const portal =
+    open && typeof document !== "undefined"
+      ? createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-[9998] bg-transparent"
+              role="presentation"
+              onMouseDown={close}
+              onTouchStart={close}
+            />
+            <div style={{ position: "fixed", left: pos.left, top: pos.top, width: pos.width, zIndex: 9999 }}>
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.20)] p-2 max-[360px]:p-1.5">
+                <div
+                  id={listboxId}
+                  ref={listRef}
+                  role="listbox"
+                  tabIndex={-1}
+                  onKeyDown={onListKeyDown}
+                  style={{ maxHeight: pos.maxHeight }}
+                  className="overflow-auto outline-none [-webkit-overflow-scrolling:touch]"
+                >
+                  <div className="space-y-1">
+                    {options.map((opt, idx) => {
+                      const isSelectedOpt = opt === value;
+                      const isActive = idx === activeIndex;
+
+                      return (
+                        <button
+                          key={opt}
+                          type="button"
+                          role="option"
+                          aria-selected={isSelectedOpt}
+                          data-idx={idx}
+                          onMouseEnter={() => setActiveIndex(idx)}
+                          onClick={() => selectAt(idx)}
+                          className={[
+                            "w-full text-left rounded-xl",
+                            "px-4 py-2 max-[360px]:px-3",
+                            "text-[15px] sm:text-base leading-snug",
+                            "transition",
+                            isActive ? "bg-slate-100" : "hover:bg-slate-50",
+                            isSelectedOpt ? "font-extrabold text-slate-900" : "font-semibold text-slate-800",
+                          ].join(" ")}
+                        >
+                          <span className="block whitespace-normal break-words">{opt}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>,
+          document.body
+        )
+      : null;
 
   return (
     <label className="block">
@@ -733,32 +949,58 @@ function SelectField({ label, value, onChange, placeholder, helper, error, icon,
         {hasError ? <div className="text-xs font-black text-red-700">{error}</div> : null}
       </div>
 
+      {/* ✅ Back to SAME base design as Field() */}
       <div
+        ref={rootRef}
         className={[
-          "mt-2 flex items-center gap-2 rounded-xl border px-3",
-          "h-12",
+          "mt-2 flex items-center gap-2 rounded-xl border px-3 max-[360px]:px-2",
+          "h-12 max-[360px]:h-auto max-[360px]:py-2 max-[360px]:items-start",
           "bg-white",
           hasError
             ? "border-red-200 focus-within:ring-4 focus-within:ring-red-50"
             : "border-slate-200 focus-within:ring-4 focus-within:ring-slate-900/10",
         ].join(" ")}
       >
-        {icon ? <span className="shrink-0">{icon}</span> : null}
+        {/* ✅ Icon = fixed 18px like your other fields */}
+        {icon ? (
+          <span className="shrink-0 h-[18px] w-[18px] flex items-center justify-center text-slate-500 max-[360px]:mt-[2px]">
+            {icon}
+          </span>
+        ) : null}
 
-        <select
-          value={value}
-          onChange={(e) => onChange?.(e.target.value)}
+        <button
+          ref={buttonRef}
+          type="button"
+          onClick={() => {
+            setOpen((v) => !v);
+            window.requestAnimationFrame(computePos);
+          }}
+          onKeyDown={onButtonKeyDown}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={listboxId}
           aria-invalid={hasError}
           aria-describedby={helperId}
-          className="w-full bg-transparent outline-none text-base font-semibold text-slate-900"
+          className={[
+            "w-full bg-transparent outline-none",
+            "flex items-center justify-between gap-3",
+            "text-[15px] sm:text-base font-semibold leading-snug",
+            "max-[360px]:items-start",
+            displayText ? "text-slate-900" : "text-slate-500",
+          ].join(" ")}
         >
-          <option value="">{placeholder}</option>
-          {options.map((opt) => (
-            <option key={opt} value={opt}>
-              {opt}
-            </option>
-          ))}
-        </select>
+          {/* ✅ Desktop = truncate, Fold = wraps */}
+          <span className="truncate max-[360px]:whitespace-normal max-[360px]:break-words">
+            {displayText || placeholder}
+          </span>
+
+          {/* ✅ Chevron fixed 18px to match icons */}
+          <span className="shrink-0 h-[18px] w-[18px] flex items-center justify-center text-slate-700 max-[360px]:mt-[2px]">
+            <IconChevronDown className={["transition-transform", open ? "rotate-180" : ""].join(" ")} />
+          </span>
+        </button>
+
+        {portal}
       </div>
 
       {helper ? (
