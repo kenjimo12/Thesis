@@ -9,25 +9,18 @@ import Inbox from "./Sections/Inbox";
 import MeetRequests from "./Sections/MeetRequests";
 import Calendar from "./Sections/Calendar";
 import Phq from "./Sections/Phq";
-
 import AccountSettings from "./Sections/AccountSettings";
 import Logout from "./Sections/Logout";
 import StudentAccounts from "./Sections/StudentAccounts";
-
-// components
-import StatCard from "./Components/StatCard";
 
 /* ===================== THEME ===================== */
 const BRAND = "#B9FF66"; // accent only
 
 /* ===================== ENV HELPERS ===================== */
 function isProductionEnv() {
-  // CRA / webpack
   if (typeof process !== "undefined" && process?.env?.NODE_ENV) {
     return process.env.NODE_ENV === "production";
   }
-
-  // Vite (avoid parsing import.meta in non-Vite)
   try {
     // eslint-disable-next-line no-new-func
     const meta = new Function("return import.meta")();
@@ -180,15 +173,20 @@ const IconUsers = ({ className }) => (
 );
 
 /* ===================== TABS ===================== */
-const TABS = [
+const MAIN_TABS = [
   { key: "inbox", label: "Inbox", Icon: IconInbox },
   { key: "meet", label: "Meet Requests", Icon: IconMeet },
   { key: "calendar", label: "Calendar", Icon: IconCalendar },
   { key: "phq", label: "PHQ", Icon: IconPHQ },
   { key: "students", label: "Student Accounts", Icon: IconUsers },
+];
+
+const BOTTOM_TABS = [
   { key: "settings", label: "Account Settings", Icon: IconSettings },
   { key: "logout", label: "Logout", Icon: IconLogout },
 ];
+
+const ALL_TABS = [...MAIN_TABS, ...BOTTOM_TABS];
 
 function SidebarTooltip({ show, text }) {
   if (!show) return null;
@@ -213,6 +211,43 @@ function SidebarTooltip({ show, text }) {
   );
 }
 
+function SidebarTabButton({ tab, activeTab, onClickTab, sidebarCollapsed }) {
+  const active = tab.key === activeTab;
+
+  return (
+    <li className="relative group overflow-x-clip">
+      <button
+        type="button"
+        onClick={() => onClickTab(tab.key)}
+        aria-label={tab.label}
+        className={[
+          "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl",
+          "text-sm font-extrabold transition",
+          sidebarCollapsed ? "sm:justify-center sm:px-2" : "",
+          active ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100",
+        ].join(" ")}
+      >
+        <tab.Icon
+          className={[
+            "w-5 h-5 shrink-0",
+            active ? "text-white" : "text-slate-500",
+          ].join(" ")}
+        />
+
+        <span className={sidebarCollapsed ? "hidden sm:hidden" : "flex-1 text-left"}>
+          {tab.label}
+        </span>
+
+        {!sidebarCollapsed && active ? (
+          <span className="w-2 h-2 rounded-full" style={{ background: BRAND }} />
+        ) : null}
+      </button>
+
+      <SidebarTooltip show={sidebarCollapsed} text={tab.label} />
+    </li>
+  );
+}
+
 export default function CounselorDashboard() {
   const navigate = useNavigate();
 
@@ -220,47 +255,55 @@ export default function CounselorDashboard() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState("inbox");
 
-  const [stats, setStats] = useState({
-    pendingAsk: 0,
-    pendingMeet: 0,
-    todaysSessions: 0,
-    openIncidents: 0,
-  });
-
   useEffect(() => {
     const role = (localStorage.getItem("role") || "").trim().toLowerCase();
     const isProd = isProductionEnv();
-
-    if (isProd && role !== "counselor") {
-      navigate("/unauthorized", { replace: true });
-    }
+    if (isProd && role !== "counselor") navigate("/unauthorized", { replace: true });
   }, [navigate]);
 
   useEffect(() => {
     let mounted = true;
-
     (async () => {
       try {
-        const data = await getCounselorDashboardStats({ counselorId: "C-001" });
-        if (mounted) setStats(data);
+        await getCounselorDashboardStats({ counselorId: "C-001" });
+        if (!mounted) return;
       } catch (e) {
+        // eslint-disable-next-line no-console
         console.error("Failed to load counselor stats:", e);
       }
     })();
-
     return () => {
       mounted = false;
     };
   }, []);
+
+  // ✅ Enhancements: Esc closes sidebar, prevent body scrolling when open
+  useEffect(() => {
+    if (!sidebarOpen) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") setSidebarOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sidebarOpen]);
 
   const onClickTab = (key) => {
     setActiveTab(key);
     setSidebarOpen(false);
   };
 
-  const activeLabel = useMemo(() => {
-    return TABS.find((t) => t.key === activeTab)?.label || "Dashboard";
-  }, [activeTab]);
+  const activeLabel = useMemo(
+    () => ALL_TABS.find((t) => t.key === activeTab)?.label || "Dashboard",
+    [activeTab]
+  );
 
   const renderActiveSection = () => {
     switch (activeTab) {
@@ -283,9 +326,13 @@ export default function CounselorDashboard() {
   };
 
   return (
-    // ✅ KEY FIX: make the root a flex column so mobile header consumes height,
-    // and the content gets the remaining space (no clipping at bottom).
     <div className="h-dvh overflow-hidden bg-slate-50 text-slate-900 font-[Nunito] flex flex-col">
+      {/* Cross-browser: hide scrollbars while preserving scrolling */}
+      <style>{`
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+      `}</style>
+
       <div className="sm:hidden sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200 shrink-0">
         <div className="flex items-center gap-3 px-4 py-3">
           <button
@@ -301,9 +348,7 @@ export default function CounselorDashboard() {
             <div className="text-sm font-extrabold leading-5 truncate">
               Counselor Dashboard
             </div>
-            <div className="text-xs font-bold text-slate-500 truncate">
-              {activeLabel}
-            </div>
+            <div className="text-xs font-bold text-slate-500 truncate">{activeLabel}</div>
           </div>
         </div>
       </div>
@@ -319,19 +364,19 @@ export default function CounselorDashboard() {
         className={[
           "fixed top-0 left-0 z-50 h-full bg-white border-r border-slate-200",
           "transition-[transform,width] duration-200",
-          // Mobile sizing
           "w-[85vw] max-w-[20rem]",
-          // Desktop sizing
           sidebarCollapsed ? "sm:w-20" : "sm:w-72",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
           "sm:translate-x-0",
+          "overflow-x-clip", // ✅ kills horizontal scrollbar reliably
         ].join(" ")}
         aria-label="Sidebar"
       >
-        <div className="h-full overflow-y-auto">
+        {/* ✅ Column layout, main scroll region only */}
+        <div className="h-full flex flex-col overflow-x-clip">
           <div
             className={[
-              "border-b border-slate-200",
+              "border-b border-slate-200 shrink-0",
               sidebarCollapsed ? "px-3 pt-4 pb-3" : "px-5 pt-5 pb-4",
             ].join(" ")}
           >
@@ -387,7 +432,8 @@ export default function CounselorDashboard() {
             )}
           </div>
 
-          <nav className="px-3 py-4">
+          {/* Main nav scrolls; x is clipped (tooltip won't create scrollbar) */}
+          <nav className="px-3 py-4 flex-1 min-h-0 overflow-y-auto overflow-x-clip">
             <div
               className={[
                 "px-2 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider",
@@ -398,56 +444,35 @@ export default function CounselorDashboard() {
             </div>
 
             <ul className="mt-2 space-y-1">
-              {TABS.map((t) => {
-                const active = t.key === activeTab;
-                const showTooltip = sidebarCollapsed;
-
-                return (
-                  <li key={t.key} className="relative group">
-                    <button
-                      type="button"
-                      onClick={() => onClickTab(t.key)}
-                      aria-label={t.label}
-                      className={[
-                        "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl",
-                        "text-sm font-extrabold transition",
-                        sidebarCollapsed ? "sm:justify-center sm:px-2" : "",
-                        active
-                          ? "bg-slate-900 text-white"
-                          : "text-slate-700 hover:bg-slate-100",
-                      ].join(" ")}
-                    >
-                      <t.Icon
-                        className={[
-                          "w-5 h-5 shrink-0",
-                          active ? "text-white" : "text-slate-500",
-                        ].join(" ")}
-                      />
-
-                      <span
-                        className={[
-                          "flex-1 text-left",
-                          sidebarCollapsed ? "hidden sm:hidden" : "",
-                        ].join(" ")}
-                      >
-                        {t.label}
-                      </span>
-
-                      {!sidebarCollapsed && active ? (
-                        <span className="w-2 h-2 rounded-full" style={{ background: BRAND }} />
-                      ) : null}
-                    </button>
-
-                    <SidebarTooltip show={showTooltip} text={t.label} />
-                  </li>
-                );
-              })}
+              {MAIN_TABS.map((t) => (
+                <SidebarTabButton
+                  key={t.key}
+                  tab={t}
+                  activeTab={activeTab}
+                  onClickTab={onClickTab}
+                  sidebarCollapsed={sidebarCollapsed}
+                />
+              ))}
             </ul>
           </nav>
+
+          {/* ✅ Bottom pinned */}
+          <div className="px-3 pb-4 pt-2 shrink-0 border-t border-slate-200 overflow-x-clip">
+            <ul className="space-y-1">
+              {BOTTOM_TABS.map((t) => (
+                <SidebarTabButton
+                  key={t.key}
+                  tab={t}
+                  activeTab={activeTab}
+                  onClickTab={onClickTab}
+                  sidebarCollapsed={sidebarCollapsed}
+                />
+              ))}
+            </ul>
+          </div>
         </div>
       </aside>
 
-      {/* ✅ KEY FIX: remove h-dvh here; let it be flex-1 so mobile header height is respected */}
       <div
         className={[
           "flex-1 min-h-0 overflow-hidden transition-[margin] duration-200",
@@ -473,7 +498,13 @@ export default function CounselorDashboard() {
             </div>
           </header>
 
-          <main className="min-w-0 flex-1 min-h-0 overflow-hidden">
+          {/* ✅ Inbox: hide scrollbar but keep scroll */}
+          <main
+            className={[
+              "min-w-0 flex-1 min-h-0 overflow-auto",
+              activeTab === "inbox" ? "no-scrollbar" : "",
+            ].join(" ")}
+          >
             {renderActiveSection()}
           </main>
         </div>
