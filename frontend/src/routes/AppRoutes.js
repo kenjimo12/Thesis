@@ -1,4 +1,4 @@
-// src/routes/AppRoutes.js
+// File: src/routes/AppRoutes.js
 import { Routes, Route } from "react-router-dom";
 import MainLayout from "../layouts/MainLayout";
 
@@ -23,10 +23,10 @@ import Unauthorized from "../pages/Unauthorized";
 // Students
 import ProfileSettings from "../pages/Student/ProfileSettings";
 
-// Admin/Counselor page
+// Dashboards
 import CounselorDashboard from "../pages/CounselorDashboard/CounselorDashboard";
+import AdminDashboard from "../pages/AdminDashboard/AdminDashboard";
 
-// ✅ your protected wrapper (currently OFF inside ProtectedRoute.js)
 import ProtectedRoute from "./ProtectedRoute";
 
 export default function AppRoutes() {
@@ -35,17 +35,17 @@ export default function AppRoutes() {
       <ScrollToTop />
 
       <Routes>
-        {/* =======================
-            COUNSELOR DASHBOARD
-            NO NAVBAR + NO FOOTER
-            ======================= */}
+        {/* COUNSELOR DASHBOARD (NO NAVBAR/FOOTER) */}
         <Route element={<ProtectedRoute />}>
           <Route path="/counselor/dashboard" element={<CounselorDashboard />} />
         </Route>
 
-        {/* =======================
-            MAIN SITE (WITH NAVBAR/FOOTER)
-            ======================= */}
+        {/* ✅ ADMIN DASHBOARD (NO NAVBAR/FOOTER) */}
+        <Route element={<ProtectedRoute />}>
+          <Route path="/admin/dashboard" element={<AdminDashboard />} />
+        </Route>
+
+        {/* MAIN SITE (WITH NAVBAR/FOOTER) */}
         <Route element={<MainLayout />}>
           {/* PUBLIC */}
           <Route path="/" element={<LandingPage />} />
@@ -58,7 +58,7 @@ export default function AppRoutes() {
           <Route path="/forgotpassword" element={<ForgotPassword />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
 
-          {/* TEMP: These were protected before, now open because ProtectedRoute allows all */}
+          {/* Protected (your ProtectedRoute currently allows all) */}
           <Route element={<ProtectedRoute />}>
             {/* Guidance Counseling */}
             <Route path="/services/counseling" element={<GuidanceCounseling />} />

@@ -1,3 +1,4 @@
+// src/components/Features/Features.jsx
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -66,12 +67,12 @@ function FeatureCard({
       <div className="h-[10px] w-full bg-black/15 shrink-0" />
 
       {/* Content */}
-      <div className="flex-1 p-6 sm:p-8 lg:p-10 flex flex-col items-center text-center">
+      <div className="flex-1 p-5 sm:p-7 lg:p-9 flex flex-col items-center text-center">
         {/* Image (FIXED FRAME so all icons look same size) */}
-        <div className="relative mb-6">
+        <div className="relative mb-5 sm:mb-6">
           <div
             className={`
-              absolute -inset-4
+              absolute -inset-3 sm:-inset-4
               rounded-[28px]
               border-4 border-black
               ${isGreen ? "bg-white/60" : "bg-white/50"}
@@ -79,14 +80,15 @@ function FeatureCard({
             `}
           />
 
-          {/* This box enforces consistent icon sizing */}
+          {/* Smaller responsive box enforces consistent icon sizing */}
           <div
             className="
               relative
               flex items-center justify-center
-              h-[140px] w-[180px]
-              sm:h-[170px] sm:w-[220px]
-              lg:h-[200px] lg:w-[260px]
+              h-[115px] w-[155px]
+              min-[360px]:h-[125px] min-[360px]:w-[170px]
+              sm:h-[150px] sm:w-[205px]
+              lg:h-[175px] lg:w-[235px]
             "
           >
             <img
@@ -94,9 +96,10 @@ function FeatureCard({
               alt={topLabel}
               draggable={false}
               className="
-                max-h-[120px] max-w-[160px]
-                sm:max-h-[150px] sm:max-w-[200px]
-                lg:max-h-[175px] lg:max-w-[240px]
+                max-h-[95px] max-w-[135px]
+                min-[360px]:max-h-[105px] min-[360px]:max-w-[150px]
+                sm:max-h-[125px] sm:max-w-[180px]
+                lg:max-h-[145px] lg:max-w-[205px]
                 object-contain
                 drop-shadow-[0_8px_0_rgba(0,0,0,0.16)]
               "
@@ -126,7 +129,7 @@ function FeatureCard({
               className="
                 font-extrabold
                 text-[#222]
-                text-[24px] sm:text-[28px] lg:text-[32px]
+                text-[22px] sm:text-[26px] lg:text-[30px]
                 leading-[1.1]
                 tracking-tight
               "
@@ -138,7 +141,7 @@ function FeatureCard({
           {desc && (
             <p
               className="
-                text-[15px] sm:text-[16px] lg:text-[18px]
+                text-[14px] sm:text-[15px] lg:text-[16px]
                 leading-[1.6]
                 text-black/70
               "
@@ -149,15 +152,16 @@ function FeatureCard({
         </div>
 
         {/* CTA ONLY */}
-        <div className="mt-auto pt-8 w-full flex justify-center sm:justify-end">
+        <div className="mt-auto pt-7 w-full flex justify-center sm:justify-end">
           <button
             type="button"
             onClick={() => {
               if (to && onNavigate) onNavigate(to);
             }}
             className="
+              w-full sm:w-auto
               inline-flex items-center justify-center gap-3
-              min-h-[52px]
+              min-h-[50px]
               px-6 py-3
               rounded-full
               bg-black text-white
@@ -185,11 +189,11 @@ export default function Features() {
   const navigate = useNavigate();
 
   return (
-    <section className="w-full bg-white py-16 sm:py-20 lg:py-28 overflow-hidden font-sans">
+    <section className="w-full bg-white py-14 sm:py-18 lg:py-24 overflow-hidden font-sans">
       <div className="mx-auto w-full max-w-[1400px] px-6 sm:px-8 lg:px-10">
         {/* Header */}
         <div className="text-center mb-12 sm:mb-16 lg:mb-20">
-          <h2 className="text-[32px] sm:text-[40px] lg:text-[48px] font-extrabold leading-tight">
+          <h2 className="text-[30px] sm:text-[40px] lg:text-[48px] font-extrabold leading-tight">
             Features
           </h2>
 
@@ -198,17 +202,17 @@ export default function Features() {
               src={starImg}
               alt="stars"
               draggable={false}
-              className="h-[36px] sm:h-[44px] lg:h-[52px] w-auto"
+              className="h-[34px] sm:h-[44px] lg:h-[52px] w-auto"
             />
           </div>
 
-          <p className="mt-4 mx-auto max-w-[70ch] text-[16px] sm:text-[18px] lg:text-[20px] text-black/70 leading-[1.5]">
+          <p className="mt-4 mx-auto max-w-[70ch] text-[15px] sm:text-[18px] lg:text-[20px] text-black/70 leading-[1.5]">
             Simple tools designed for mobile first, without sacrificing desktop
             clarity.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-7 lg:gap-10">
           <FeatureCard
             variant="gray"
             topLabel="Guidance"

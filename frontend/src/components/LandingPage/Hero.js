@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import heroImg from "../../assets/first.png";
-import bottomParallaxImg from "../../assets/Parallax.png";
+import bottomParallaxImg from "../../assets/hi.jpg";
 
 export default function Hero() {
   const navigate = useNavigate();

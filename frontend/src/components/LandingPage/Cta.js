@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import mentalImg from "../../assets/let.png";
-import parallaxImg from "../../assets/Parallax-2.png";
+import parallaxImg from "../../assets/Parallax-2-final.jpg";
 
 export default function LandingHero() {
   const navigate = useNavigate();
