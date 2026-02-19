@@ -47,14 +47,6 @@ const COURSE_OPTIONS = [
   "Bachelor of Arts in Political Science",
 ];
 
-const CAMPUS_OPTIONS = [
-  "Legarda Campus (Manila)",
-  "Pasay Campus",
-  "Jose Abad Santos Campus (Pasay)",
-  "Andres Bonifacio Campus (Pasig)",
-  "Apolinario Mabini Campus (Quezon City)",
-  "Elisa Esguerra Campus (Malabon)",
-];
 
 const PROFILE_SECTIONS = [
   {
@@ -69,9 +61,9 @@ const PROFILE_SECTIONS = [
   },
   {
     title: "Academic Info",
-    subtitle: "Campus & program",
+    subtitle: "Course & program",
     items: [
-      { label: "Campus", key: "campus", options: CAMPUS_OPTIONS, kind: "select" },
+      
       { label: "Course", key: "course", options: COURSE_OPTIONS, kind: "select" },
       { label: "Created At", key: "createdMonth", breakAll: true, inputType: "text", autoComplete: "off", readOnly: false },
     ],
@@ -1088,7 +1080,7 @@ function generateDevSeedStudents(count = 20, startMonth = "2026-01") {
       createdMonth,
       firstName: "Seed",
       lastName: `Student ${i}`,
-      campus: CAMPUS_OPTIONS[(i - 1) % CAMPUS_OPTIONS.length],
+     
       course: COURSE_OPTIONS[(i - 1) % COURSE_OPTIONS.length],
     });
   }

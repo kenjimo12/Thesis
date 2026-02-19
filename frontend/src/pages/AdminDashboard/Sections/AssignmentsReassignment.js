@@ -16,12 +16,12 @@ const COURSE_ORDER = [
   "Bachelor of Elementary Education (SPED)",
   "Bachelor of Physical Education",
   "Bachelor of Secondary Education",
-  "Bachelor of Science in Business Administration ",
+  "Bachelor of Science in Business Administration (BSBA)",
   "Bachelor of Science in Accounting Information System",
   "Bachelor of Science in Information Technology",
   "Bachelor of Science in Computer Science",
-  "Bachelor of Science in Hospitality Management ",
-  "Bachelor of Science in Tourism Management ",
+  "Bachelor of Science in Hospitality Management (BSHM)",
+  "Bachelor of Science in Tourism Management (BSTM)",
   "Bachelor of Science in Criminology",
   "Bachelor of Arts in English Language",
   "Bachelor of Arts in Psychology",
@@ -379,7 +379,7 @@ function seedStudents() {
     },
   ];
 }
-
+// 1) FIX: seedCounselors() -> add status so active% + UI line are correct
 function seedCounselors() {
   return [
     {
@@ -387,6 +387,7 @@ function seedCounselors() {
       fullName: "Angela Ramos",
       counselorId: "C-0001",
       email: "angela.ramos@checkin.edu.ph",
+      status: STATUS.ACTIVE,
       createdAt: "2024-08-15T08:10:00.000Z",
     },
     {
@@ -394,6 +395,7 @@ function seedCounselors() {
       fullName: "Jerome Villanueva",
       counselorId: "C-0002",
       email: "jerome.villanueva@checkin.edu.ph",
+      status: STATUS.ACTIVE,
       createdAt: "2024-07-02T10:20:00.000Z",
     },
     {
@@ -401,6 +403,7 @@ function seedCounselors() {
       fullName: "Mika Santos",
       counselorId: "C-0003",
       email: "mika.santos@checkin.edu.ph",
+      status: STATUS.ACTIVE,
       createdAt: "2024-06-10T03:30:00.000Z",
     },
     {
@@ -408,10 +411,13 @@ function seedCounselors() {
       fullName: "Paolo Reyes",
       counselorId: "C-0004",
       email: "paolo.reyes@checkin.edu.ph",
+      status: STATUS.ACTIVE,
       createdAt: "2024-03-11T11:15:00.000Z",
     },
   ];
 }
+
+// 2) FIX: Counselors MetricCard line -> show active/inactive (not repeating total)
 
 function deriveStudentStats({ students, fallbackTotal, fallbackActive }) {
   if (Array.isArray(students)) {

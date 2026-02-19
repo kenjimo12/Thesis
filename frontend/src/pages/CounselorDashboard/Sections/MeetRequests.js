@@ -1573,7 +1573,7 @@ syncCalendarSelectedDate(nextDate); // ✅ Calendar auto-select new date
                       { label: "Reason", value: selected.reason },
                       { label: "Appointment time", value: `${selected.date} • ${selected.time}` },
                       { label: "Counselor", value: selected.counselor?.name || "Counselor" },
-                      { label: "Campus", value: officeMeta.campus },
+                    
                       { label: "Office", value: selected.mode === "In-person" ? officeMeta.office : "Not required (Online)" },
                       {
                         label: "Online link",
@@ -1598,7 +1598,7 @@ syncCalendarSelectedDate(nextDate); // ✅ Calendar auto-select new date
                       { label: "Full name", value: selected.student?.name || "—" },
                       { label: "Student ID", value: selected.student?.studentId || "—" },
                       { label: "Email", value: selected.student?.email || "—" },
-                      { label: "Campus", value: selected.student?.campus || "—" },
+                 
                       { label: "Course", value: selected.student?.courses || "—" },
                     ]}
                   />
